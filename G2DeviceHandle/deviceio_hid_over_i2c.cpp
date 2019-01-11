@@ -49,7 +49,7 @@
 #define CMD_CU_ERASE                    (0xB3)
 #define CMD_CU_WRITE                    (0xB4)
 
-#define CMD_FW_VER                      0xF1
+#define CMD_FW_VER                      (0xF1)
 
 #define G2_SUB_0x13_GOTOBOOT            0x80
 #define G2_SUB_0x13_FWDOWNREADY         0x81
@@ -119,6 +119,7 @@ DeviceIO_hid_over_i2c::initBuffer()
     memset(m_buffer, 0x0, sizeof(unsigned char) * MAX_BUFFER_SIZE_HID_OVER_I2C);
 }
 
+#ifdef USE_EXCEPTION
 void
 DeviceIO_hid_over_i2c::throwNotSupportException(std::string functionName)
 {
@@ -128,6 +129,7 @@ DeviceIO_hid_over_i2c::throwNotSupportException(std::string functionName)
 	msg.append(errorMsg);
 	throw G2DeviceException(msg, -1);
 }
+#endif
 
 int
 DeviceIO_hid_over_i2c::openDevice(string hidRawName)
@@ -165,7 +167,12 @@ DeviceIO_hid_over_i2c::openDevice(string hidRawName)
         char errorMsg[1024] = "";
         sprintf(errorMsg, "openDevice, unable to open device, errno=%d (%s)", errno, strerror(errno));
         msg.append(errorMsg);
+
+#ifdef USE_EXCEPTION
         throw G2DeviceException(msg, -1);
+#else
+        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg);
+#endif
 
         return m_fd;
     }
@@ -200,7 +207,11 @@ DeviceIO_hid_over_i2c::closeDevice()
         char errorMsg[1024] = "";
         sprintf(errorMsg, "closeDevice, unable to close device, errno=%d (%s)", errno, strerror(errno));
         msg.append(errorMsg);
+#ifdef USE_EXCEPTION
         throw G2DeviceException(msg, -1);
+#else
+        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg);
+#endif
 
         return m_fd;
     }

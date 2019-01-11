@@ -4,7 +4,9 @@
 #include "exitcode.h"
 #include "logmanager.h"
 #include "exception.h"
+#ifdef USE_EXCEPTION
 #include "procexception.h"
+#endif
 #include "gendevicehandle.h"
 #include "prochandler.h"
 

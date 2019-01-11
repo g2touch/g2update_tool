@@ -1,6 +1,6 @@
 #ifndef G2DEVICEEXCEPTION_H_
 #define G2DEVICEEXCEPTION_H_
-
+#ifdef USE_EXCEPTION
 #include <exception>
 #include <string>
 
@@ -32,5 +32,5 @@ class G2DeviceException : public std::exception
     	std::string m_msg;
     	unsigned int m_errCode;
 };
-
+#endif
 #endif

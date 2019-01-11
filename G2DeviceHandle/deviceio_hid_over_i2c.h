@@ -43,7 +43,9 @@ namespace G2
                 void initBuffer();
 
             private:
+#ifdef USE_EXCEPTION
                 void throwNotSupportException(std::string functionName);
+#endif
 
                 int waitRxData(int &fd, int uSec);
                 int GetCmdWaitAckTime(unsigned char cmd, int mSec);

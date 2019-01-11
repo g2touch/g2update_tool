@@ -1,7 +1,9 @@
 #include "arghandler.h"
 #include "logmanager.h"
 #include "prochandler.h"
+#ifdef USE_EXCEPTION
 #include "procexception.h"
+#endif
 #include "gendevicehandle.h"
 
 #include <string.h>

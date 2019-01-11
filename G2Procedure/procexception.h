@@ -1,6 +1,6 @@
 #ifndef SPEXCEPTION
 #define SPEXCEPTION
-
+#ifdef USE_EXCEPTION
 #include <exception>
 #include <string>
 #include "proceduredllexportdefine.h"
@@ -48,6 +48,7 @@ namespace G2
 
     } // Procedure
 } // G2
+#endif
 
 #endif // SPEXCEPTION
 
