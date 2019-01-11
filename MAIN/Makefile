@@ -4,7 +4,7 @@
 CC       ?= gcc
 CXX      ?= g++
 LDFLAGS  ?=
-DEFINES  = -DAPP_VERSION=\"1.2.2991\"
+DEFINES  = -DAPP_VERSION=\"1.2.2993\"
 CFLAGS   += -g -Wall $(DEFINES) -pthread
 CXXFLAGS += $(CFLAGS) -Weffc++
 INCPATH  = -I. -I../G2ArgHandle -I../G2DeviceHandle -I../G2Procedure -I../Log

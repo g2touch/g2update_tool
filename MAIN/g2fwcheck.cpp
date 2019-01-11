@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
         case 0:     // no general err
             if (argHandle->ResolveInterface() == false)
             {
-                	LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "Interface Resolve Fail: %s", argHandle->GetInterfaceResolved());
+                	LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "Interface Resolve Fail: %s", argHandle->GetInterfaceResolved().c_str());
                 	EXIT_CODE = EXIT_FLOW_ERROR;
                 	delete argHandle;
                 	RETURN_EXIT_CODE; // exit if help required
@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
             break;
         default:    // general parameter err
             nArgParseResult = -10;
-            LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "PraseErrorInformation: %s", argHandle->GetWholeParam());
+            LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "PraseErrorInformation: %s", argHandle->GetWholeParam().c_str());
             break;
     }
 

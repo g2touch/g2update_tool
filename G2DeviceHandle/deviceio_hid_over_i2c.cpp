@@ -171,7 +171,7 @@ DeviceIO_hid_over_i2c::openDevice(string hidRawName)
 #ifdef USE_EXCEPTION
         throw G2DeviceException(msg, -1);
 #else
-        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg);
+        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg.c_str());
 #endif
 
         return m_fd;
@@ -210,7 +210,7 @@ DeviceIO_hid_over_i2c::closeDevice()
 #ifdef USE_EXCEPTION
         throw G2DeviceException(msg, -1);
 #else
-        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg);
+        LOG_G2_E(CLog::getLogOwner(), TAG, "%s", msg.c_str());
 #endif
 
         return m_fd;

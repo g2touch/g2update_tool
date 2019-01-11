@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
     {
         if (argHandle->ResolveInterface() == false)
         {
-            LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "Interface Resolve Fail: %s", argHandle->GetInterfaceResolved());
+            LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "Interface Resolve Fail: %s", argHandle->GetInterfaceResolved().c_str());
             EXIT_CODE = EXIT_IC_COMMUNICATION_ERROR;
             delete argHandle;
             RETURN_EXIT_CODE;    // exit if help required

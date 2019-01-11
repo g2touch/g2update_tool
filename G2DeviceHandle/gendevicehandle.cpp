@@ -60,7 +60,7 @@ bool CDeviceHandler::openDevice()
     }
     else if (detectByHidRawName(m_devPath) == false) /* detect "/dev/hidraw*" */
     {
-    	LOG_G2_D(CLog::getLogOwner(), TAG, "cannot detect device with Resolved Path : %s", m_devPath);
+    	LOG_G2_D(CLog::getLogOwner(), TAG, "cannot detect device with Resolved Path : %s", m_devPath.c_str());
     	return false;
     }
 
@@ -69,7 +69,7 @@ bool CDeviceHandler::openDevice()
 
     if (fd < 0)
     {
-    	LOG_G2_E(CLog::getLogOwner(), TAG, "cannot open device (raw name: %s)", m_hidrawNode);
+    	LOG_G2_E(CLog::getLogOwner(), TAG, "cannot open device (raw name: %s)", m_hidrawNode.c_str());
     	return false;
     }
 
