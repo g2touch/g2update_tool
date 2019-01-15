@@ -4,9 +4,9 @@
 CC       ?= gcc
 CXX      ?= g++
 LDFLAGS  ?=
-DEFINES  = -DAPP_VERSION=\"1.2.2998\"
-CFLAGS   += -g -Wall $(DEFINES) -pthread
+CFLAGS   += -g -Wall -pthread
 CXXFLAGS += $(CFLAGS) -Weffc++
+DEFINES  = -DAPP_VERSION=\"1.2.3002\"
 INCPATH  = -I. -I../G2ArgHandle -I../G2DeviceHandle -I../G2Procedure -I../Log
 
 ###############################################################################
@@ -28,7 +28,7 @@ bin_dir:
 	@mkdir -p $(BIN_DIR)
 
 $(CXX_OBJS): %.o: %.cpp
-	$(CXX) -c $(CXXFLAGS) $(INCPATH) $< -o $@
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) $(DEFINES) $< -o $@
 
 $(BIN_DIR)/%:%.o
 	$(CXX) -o $@ $(ALL_OBJS) $(CXXFLAGS) $(LDFLAGS)
