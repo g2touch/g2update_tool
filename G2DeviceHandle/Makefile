@@ -3,8 +3,9 @@
 ###############################################################################
 CC       ?= gcc
 CXX      ?= g++
+CPPFLAGS ?=
 CFLAGS   += -g -Wall
-CXXFLAGS += $(CFLAGS) -Weffc++
+CXXFLAGS += -g -Wall -Weffc++
 INCPATH  = -I. -I../G2ArgHandle -I../Log
 
 ###############################################################################
@@ -23,12 +24,12 @@ INC_H_PATHS      = $(shell find ../* -name "*.h")
 all: $(CXX_OBJS) $(C_OBJS)
 
 %.o:%.c $(INC_H_PATHS)
-	@echo $(CC) -M $(CXXFLAGS) $(INCPATH) $<
+	@echo $(CC) -M $(CFLAGS) $(INCPATH) $<
 	$(CC) -c $(CFLAGS) $(INCPATH) $< -o $@
 
 %.o:%.cpp $(INC_H_PATHS)
-	@echo $(CXX) -M $(CXXFLAGS) $(INCPATH) $<
-	$(CXX) -c $(CXXFLAGS) $(INCPATH) $< -o $@
+	@echo $(CXX) -M $(CXXFLAGS) $(CPPFLAGS) $(INCPATH) $<
+	$(CXX) -c $(CXXFLAGS) $(CPPFLAGS) $(INCPATH) $< -o $@
 ###############################################################################
 clean:
 	@rm -vfr $(OBJS)
