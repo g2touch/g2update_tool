@@ -32,7 +32,7 @@ $(CXX_OBJS): %.o: %.cpp
 	$(CXX) -c $(CXXFLAGS) $(CPPFLAGS) $(INCPATH) $(DEFINES) $< -o $@
 
 $(BIN_DIR)/%:%.o
-	$(CXX) -o $@ $(ALL_OBJS) $(LDFLAGS)
+	$(CXX) -o $@ $(ALL_OBJS) $(CXXFLAGS) $(LDFLAGS)
 	rm -vfr $(CXX_OBJS)
 	@echo '=============== Finished building: $@ ==============='
 
