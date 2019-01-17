@@ -24,8 +24,8 @@ INC_H_PATHS      = $(shell find ../* -name "*.h")
 all: $(CXX_OBJS) $(C_OBJS)
 
 %.o:%.c $(INC_H_PATHS)
-	@echo $(CC) -M $(CFLAGS) $(INCPATH) $<
-	$(CC) -c $(CFLAGS) $(INCPATH) $< -o $@
+	@echo $(CC) -M $(CFLAGS) $(CPPFLAGS) $(INCPATH) $<
+	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INCPATH) $< -o $@
 
 %.o:%.cpp $(INC_H_PATHS)
 	@echo $(CXX) -M $(CXXFLAGS) $(CPPFLAGS) $(INCPATH) $<
