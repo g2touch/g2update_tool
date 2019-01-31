@@ -120,7 +120,7 @@ DeviceIO_hid_over_i2c::~DeviceIO_hid_over_i2c()
 void
 DeviceIO_hid_over_i2c::initBuffer()
 {
-    memset(out_buffer, 0x0, sizeof(unsigned char) * HID_INPUT_MAX_LEN);
+    memset(out_buffer, 0x0, sizeof(unsigned char) * HID_OUTPUT_MAX_LEN);
 }
 
 #ifdef USE_EXCEPTION
