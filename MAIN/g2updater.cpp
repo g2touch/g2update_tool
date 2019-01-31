@@ -30,6 +30,12 @@ int main(int argc, char *argv[])
     argHandle = new CArgHandler();
 
     nArgParseResult = argHandle->ParseArg(argc - 1, argv + 1);
+    if (handleParsedArgument(argHandle) < 0)
+    {
+    	EXIT_CODE = EXIT_PASS;
+    	delete argHandle;
+    	RETURN_EXIT_CODE;   // exit if help required
+    }
     switch (nArgParseResult)
     {
         case 0:     // download parameter checks (items MUST be specified)
@@ -47,13 +53,6 @@ int main(int argc, char *argv[])
     }
 
     printf("g2updater-%s\n", APP_VERSION);
-
-    if (handleParsedArgument(argHandle) < 0)
-    {
-    	EXIT_CODE = EXIT_PASS;
-    	delete argHandle;
-    	RETURN_EXIT_CODE;   // exit if help required
-    }
 
     // Interface parameter handling
     if (argHandle->IsDownloadable())

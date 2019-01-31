@@ -70,17 +70,13 @@
 #define G2_SUB_0x13_GOTO_FW_MODE        0x11
 #define G2_SUB_0x13_DOWNLOAD_FINISH     0x14
 
-// HID_I2C_OUTPUT_WO_LEN has register[2], size[2], report id, seq #, & packet cmd
-#define HID_I2C_OUTPUT_WO_LEN       (HID_I2C_OUTPUT_MAX_LEN-2)
-#define HID_I2C_OUTPUT_REGISTER     (0x00e7)
+#define HID_I2C_OUTPUT_REGISTER     (0x00E7)
 
 #define TOKEN_STX1 0x02
 #define TOKEN_STX2 0xA3
 
 #define TOKEN_ETX1 0x03
 #define TOKEN_ETX2 0xb3
-
-#define READ_SIZE  64
 
 #define FW_START_POS 0x8000
 #define CU_START_POS 0x4000
@@ -96,27 +92,35 @@ using namespace G2::DeviceIO;
 #define TAG "deviceio_hid_over_i2c"
 
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
+    m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
+    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0),
 	m_bOpened(false)
 {
-    /* malloc m_buffer */
-    m_buffer = new unsigned char[MAX_BUFFER_SIZE_HID_OVER_I2C];
+    /* malloc out_buffer, in_buffer */
+    out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
+    in_buffer = new unsigned char[HID_INPUT_MAX_LEN];
+    rxdbgbuf = new unsigned char[RXDBGBUFSIZE];
     initBuffer();
     index =0;
     packet_length=0;
     tmpRxUnit = new rxUnit();
+    dbgidx_push = 0;
+    dbgidx_pop = 0;
 }
 
 DeviceIO_hid_over_i2c::~DeviceIO_hid_over_i2c()
 {
     closeDevice();
-    delete [] m_buffer;
+    delete [] out_buffer;
+    delete [] in_buffer;
+    delete [] rxdbgbuf;
     delete tmpRxUnit;
 }
 
 void
 DeviceIO_hid_over_i2c::initBuffer()
 {
-    memset(m_buffer, 0x0, sizeof(unsigned char) * MAX_BUFFER_SIZE_HID_OVER_I2C);
+    memset(out_buffer, 0x0, sizeof(unsigned char) * HID_INPUT_MAX_LEN);
 }
 
 #ifdef USE_EXCEPTION
@@ -138,6 +142,8 @@ DeviceIO_hid_over_i2c::openDevice(string hidRawName)
     cptr = new char[hidRawName.length() + 1];
     strcpy(cptr, hidRawName.c_str());
     const char* devName = cptr;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "devName=%s", devName);
 
     if(m_fd >= 0)
     {
@@ -230,10 +236,111 @@ DeviceIO_hid_over_i2c::writeData(unsigned char * buf, int size, int timeoutMsec 
     }
     else
     {
-        ret = write(m_fd, buf + OUTPUT_IGNORE, size - OUTPUT_IGNORE);
+        ret = write(m_fd, buf, size);
+        //ret = write(m_fd, buf + OUTPUT_IGNORE, size - OUTPUT_IGNORE);
     }
 
     return ret;
+}
+
+int
+DeviceIO_hid_over_i2c::ReadDataPush( unsigned char * buf, int size)
+{
+    int i, head;
+    int ret = 0;
+
+    head = dbgidx_push;
+
+    // SKIP 2bytes ... Report ID[1byte], Index[1byte]
+    for(i = 2; i < size; i++)
+    {
+        rxdbgbuf[head&(RXDBGBUFSIZE-1)] = buf[i];
+        ++head;
+        head = head & (RXDBGBUFSIZE-1);
+    }
+    dbgidx_push = head;
+    return ret;
+}
+
+int
+DeviceIO_hid_over_i2c::ParsePushedData( unsigned char * buf, int size, int Maincommand, int Subcommand, int chk_ack = 0)
+{
+    unsigned int i=0, len=0, head=0, tail=0, cnt=0;
+    int ret = 0;
+    unsigned char tmpbuf[RXDBGBUFSIZE];
+
+    head = dbgidx_push;
+    tail = dbgidx_pop;
+
+    if(head == tail)
+    {
+        ret = 0;
+        goto end;
+    }
+    else if(head > tail)
+    {
+		memcpy(tmpbuf, &rxdbgbuf[tail], head-tail);
+		cnt = head - tail;
+    }
+    else
+    {
+		memcpy(tmpbuf, &rxdbgbuf[tail], RXDBGBUFSIZE-tail);
+		memcpy(&tmpbuf[RXDBGBUFSIZE-tail],rxdbgbuf,head);
+		cnt = (RXDBGBUFSIZE-tail) + head;
+    }
+
+    if(cnt < 7)
+    {
+        ret = 0;
+        goto end;
+    }
+
+    len = 0;
+    for(i=0; i<cnt; i++)
+    {
+        if((tmpbuf[i] == 0x02) && (tmpbuf[i+1] == 0xA3 ))
+        {
+            len = (tmpbuf[i+3]<<8) + tmpbuf[i+4];
+
+            if(((cnt-i) < 7) || ((cnt-i-7) < len)){ 
+                ret = 0;
+                goto end;
+            }
+
+            if((tmpbuf[i+len+5] != 0x03) || (tmpbuf[i+len+6] != 0xB3)) { 
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Packet Corrupted, i=%d, len=%d, etx=[%02X, %02X]", i, len, tmpbuf[i+len+5], tmpbuf[i+len+6]);
+                i += 7;
+            }
+            else
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "MainCmd=%02X/SubCmd=%02X - idx[Push=%d/Pop=%d]", Maincommand, Subcommand, dbgidx_push, dbgidx_pop);
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Packet Matched. cmd[%02X]/len[%02X]/body[%02X/%02X/%02X/%02X/%02X]",
+                    tmpbuf[i+2], len, tmpbuf[i+5], tmpbuf[i+6], tmpbuf[i+7], tmpbuf[i+8], tmpbuf[i+9]);
+
+                ret = len+1;
+                if(chk_ack && Maincommand == tmpbuf[i+2])
+                {
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "ACK.. MainCmd=%02X/SubCmd=%02X - idx[Push=%d/Pop=%d]", Maincommand, Subcommand, dbgidx_push, dbgidx_pop);
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "ACK.. Packet Matched. cmd[%02X]/len[%02X]/body[%02X/%02X/%02X/%02X/%02X]",
+                        tmpbuf[i+2], len, tmpbuf[i+5], tmpbuf[i+6], tmpbuf[i+7], tmpbuf[i+8], tmpbuf[i+9]);
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "buf-body-2[%02X/%02X/%02X/%02X/%02X/%02X/%02X/%02X]",
+                        buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9]);
+                }
+                break;
+            }
+        }
+    }
+
+    if(ret)
+    {
+        dbgidx_pop = (tail + i + len+7) & (RXDBGBUFSIZE-1);
+        if(chk_ack && Maincommand != tmpbuf[i+2]) ret = 0;
+    }
+    else if(!len)
+        dbgidx_pop = (tail + i) & (RXDBGBUFSIZE-1);
+
+end:
+	return ret;
 }
 
 int
@@ -261,6 +368,10 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
                     if(strstr((char *)&buf[7],"Not Supprot Command(0xF1") != NULL )
                     {
                         LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in Bootloader.. ");
+                    }
+                    else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
+                    {
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in USB Bootloader.. ");
                     }
                     else
                     {
@@ -346,29 +457,33 @@ bool DeviceIO_hid_over_i2c::isDeviceOpened()
 int DeviceIO_hid_over_i2c::CreateCmdBuffer(unsigned char cmd, unsigned char* data, int data_len)
 {
     int idx = 0;
-    m_buffer[idx++] = ((HID_I2C_OUTPUT_REGISTER >> 8) & 0x00FF);
-    m_buffer[idx++] = (HID_I2C_OUTPUT_REGISTER & 0x00FF);
 
-    m_buffer[idx++] = ((HID_I2C_OUTPUT_WO_LEN >> 8) & 0x00FF);
-    m_buffer[idx++] = (HID_I2C_OUTPUT_WO_LEN & 0x00FF);
+    memset(out_buffer, 0, HID_OUTPUT_MAX_LEN);
+    out_buffer[idx++] = HID_OUT_REPORT_ID;
+    out_buffer[idx++] = index++;
 
-    m_buffer[idx++] = 0x0A;
-    m_buffer[idx++] = index++;
-
-    m_buffer[idx++] = TOKEN_STX1;
-    m_buffer[idx++] = TOKEN_STX2;
-    m_buffer[idx++] = cmd;
-    m_buffer[idx++] = (data_len >> 8) & 0xff;
-    m_buffer[idx++] = data_len & 0xff;
+    out_buffer[idx++] = TOKEN_STX1;
+    out_buffer[idx++] = TOKEN_STX2;
+    out_buffer[idx++] = cmd;
+    out_buffer[idx++] = (data_len >> 8) & 0xff;
+    out_buffer[idx++] = data_len & 0xff;
 
     for(int i=0; i<data_len; i++)
     {
-        m_buffer[idx++] = data[i];
+        out_buffer[idx++] = data[i];
     }
 
-    m_buffer[idx++] = TOKEN_ETX1;
-    m_buffer[idx++] = TOKEN_ETX2;
+    out_buffer[idx++] = TOKEN_ETX1;
+    out_buffer[idx++] = TOKEN_ETX2;
 
+#if defined(USE_HID_USB)
+    if(idx != HID_OUTPUT_MAX_LEN)
+    {
+        for(; idx < (HID_OUTPUT_MAX_LEN);idx++){
+            out_buffer[idx] = 0;
+        }
+    }
+#endif
     return idx;
 }
 
@@ -378,8 +493,8 @@ int DeviceIO_hid_over_i2c::waitRxData(int &fd, int uSec)
 	struct timeval tv;
 	int retval;
 
-	FD_ZERO(&rfds);     // clear the set
-	FD_SET(fd, &rfds);  // add our file descriptor to the set
+	FD_ZERO(&rfds); /* clear the set */
+	FD_SET(fd, &rfds); /* add our file descriptor to the set */
 
 	LOG_G2_I(CLog::getLogOwner(), TAG, "waitIOReady : %d(uSec)", uSec);
 
@@ -412,10 +527,10 @@ int DeviceIO_hid_over_i2c::waitRxData(int &fd, int uSec)
 int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* data, int data_len, int uSecWait)
 {
 	int nReadSize = -1;
-	unsigned char *tmp_read = new unsigned char[READ_SIZE];
+	unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
 
 	waitRxData(m_fd, uSecWait);
-	nReadSize = readData(tmp_read, READ_SIZE, cmd, 0);
+	nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
 
 	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
 	////////////////////////////////////////////////////////////////////////
@@ -436,6 +551,7 @@ int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* 
 	return nReadSize;
 }
 
+// return uSec
 int DeviceIO_hid_over_i2c::GetCmdWaitAckTime(unsigned char cmd, int mSec)
 {
 	return mSec * 1000;
@@ -452,19 +568,20 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     while(size != 0 && nTry++ < 10)
     {
         waitRxData(m_fd, uSecWait);
-        size = readData(m_buffer, READ_SIZE, 0, 0);
+        size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
         LOG_G2_D(CLog::getLogOwner(), TAG, "size : %d", size);
     }
 
-    size = CreateCmdBuffer(cmd, data, data_len);    // m_buffer allocated
-    uSecWait = GetCmdWaitAckTime(cmd, mSecWait);
+    size = CreateCmdBuffer(cmd, data, data_len);	// m_buffer allocated
+
+    uSecWait = GetCmdWaitAckTime(cmd, mSecWait);  // 30 msec for Normal command, but some command needs more time
 
     // Tx and Check Ack
     nTry = 0;
     while (++nTry <= trial)
     {
         int uSecWaitWr = uSecWait < 200000 ? uSecWait : 200000;
-        ret = writeData(m_buffer, size);
+        ret = writeData(out_buffer, size);
         if (ret > 2)
         {	// Write success
             break;
@@ -524,6 +641,12 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
                 LOG_G2_I(CLog::getLogOwner(), TAG, "Force Set FW version 0.0.0");
                 buf[10] = buf[11] = buf[12] = buf[13] = 0;
             }
+            else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Stayed in USB bootloader");
+                LOG_G2_I(CLog::getLogOwner(), TAG, "Force Set FW version 0.0.0");
+                buf[10] = buf[11] = buf[12] = buf[13] = 0;
+            }
     		LOG_G2_I(CLog::getLogOwner(), TAG, "FW VERSION %d.%d.%d", buf[10], buf[11], (buf[12] * 256 + buf[13]));
 
             char temp[17];
@@ -556,7 +679,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     unsigned char send_buffer[256]={0,};
     unsigned char dump_buffer[CU_FILE_SIZE+100]={0,};
     unsigned short send_length = 0x40;
-    int pos =CU_START_POS;
+    int pos = CU_START_POS;
     int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
     unsigned char buf[64];
     int buf_size = 0;
@@ -1101,7 +1224,7 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
     unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_I2C_OUTPUT_MAX_LEN+10];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     unsigned char ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1129,27 +1252,22 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_I2C_OUTPUT_MAX_LEN - 6) send_len = len;
-        else send_len = ((len - sended_len) > (HID_I2C_OUTPUT_MAX_LEN - 6))? (HID_I2C_OUTPUT_MAX_LEN - 6) : (len - sended_len);
+        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
+        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
 
-        i2c_buf[0] = ((HID_I2C_OUTPUT_REGISTER >> 8) & 0x00FF);
-        i2c_buf[1] = (HID_I2C_OUTPUT_REGISTER & 0x00FF);
-        i2c_buf[2] = ((HID_I2C_OUTPUT_WO_LEN >> 8) & 0x00FF);
-        i2c_buf[3] = (HID_I2C_OUTPUT_WO_LEN & 0x00FF);
-        i2c_buf[4] = 0x0A;
-        i2c_buf[5] = index++;
-
+        i2c_buf[0] = HID_OUT_REPORT_ID;
+        i2c_buf[1] = index++;
         if(index == 0xAA) index++;
 
         for(i= 0; i < send_len; i++){
-            i2c_buf[i+6] = buf[pos++];
+            i2c_buf[i+2] = buf[pos++];
         }
-        for(i=send_len; i < (HID_I2C_OUTPUT_MAX_LEN - 6 + 6);i++){
-            i2c_buf[i+6] = 0;
+        for(i=send_len; i < (HID_OUTPUT_MAX_LEN);i++){
+            i2c_buf[i+2] = 0;
         }
         sended_len += send_len;
 
-        ret = writeData( i2c_buf, HID_I2C_OUTPUT_MAX_LEN);
+        ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
 
         if(ret == -1)
         {
@@ -1163,7 +1281,7 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
         retry_ack--;
         waitRxData(m_fd, uSecWait); //30ms
 
-        ret = readData(buf, 64, 0xb4, 0 );
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0xb4, 0 );
 
         if(ret > 2)
         {
@@ -1180,7 +1298,7 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
     unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_I2C_OUTPUT_MAX_LEN+10];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     unsigned char ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1207,27 +1325,23 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_I2C_OUTPUT_MAX_LEN - 6) send_len = len;
-        else send_len = ((len - sended_len) > (HID_I2C_OUTPUT_MAX_LEN - 6))? (HID_I2C_OUTPUT_MAX_LEN - 6) : (len - sended_len);
+        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
+        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
 
-        i2c_buf[0] = ((HID_I2C_OUTPUT_REGISTER >> 8) & 0x00FF);
-        i2c_buf[1] = (HID_I2C_OUTPUT_REGISTER & 0x00FF);
-        i2c_buf[2] = ((HID_I2C_OUTPUT_WO_LEN >> 8) & 0x00FF);
-        i2c_buf[3] = (HID_I2C_OUTPUT_WO_LEN & 0x00FF);
-        i2c_buf[4] = 0x0A;
-        i2c_buf[5] = index++;
+        i2c_buf[0] = HID_OUT_REPORT_ID;
+        i2c_buf[1] = index++;
 
         if(index == 0xAA) index++;
 
         for(i= 0; i < send_len; i++){
-            i2c_buf[i+6] = buf[pos++];
+            i2c_buf[i+2] = buf[pos++];
         }
-        for(i=send_len; i < (HID_I2C_OUTPUT_MAX_LEN - 6 + 6);i++){
-            i2c_buf[i+6] = 0;
+        for(i=send_len; i < (HID_OUTPUT_MAX_LEN);i++){
+            i2c_buf[i+2] = 0;
         }
         sended_len += send_len;
 
-        ret = writeData( i2c_buf, HID_I2C_OUTPUT_MAX_LEN);
+        ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
 
         if(ret == -1)
         {
@@ -1240,7 +1354,7 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     {
         retry_ack--;
         waitRxData(m_fd, uSecWait); //30ms
-        ret = readData(buf, 64, 0x13, 0x83 );
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x83 );
 
         if(ret > 2)
         {
@@ -1256,7 +1370,7 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
     unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_I2C_OUTPUT_MAX_LEN+10];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     unsigned char ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1284,25 +1398,24 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_I2C_OUTPUT_MAX_LEN - 6) send_len = len;
-        else send_len = ((len - sended_len) > (HID_I2C_OUTPUT_MAX_LEN - 6))? (HID_I2C_OUTPUT_MAX_LEN - 6) : (len - sended_len);
+        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
+        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
 
-        i2c_buf[0] = ((HID_I2C_OUTPUT_REGISTER >> 8) & 0x00FF);
-        i2c_buf[1] = (HID_I2C_OUTPUT_REGISTER & 0x00FF);
-        i2c_buf[2] = ((HID_I2C_OUTPUT_WO_LEN >> 8) & 0x00FF);
-        i2c_buf[3] = (HID_I2C_OUTPUT_WO_LEN & 0x00FF);
-        i2c_buf[4] = 0x0A;
-        i2c_buf[5] = 0x00;
+        i2c_buf[0] = HID_OUT_REPORT_ID;
+        i2c_buf[1] = 0x00;
 
         if(index == 0xAA) index++;
 
         for(i= 0; i < send_len; i++){
-            i2c_buf[i+6] = buf[pos++];
+            i2c_buf[i+2] = buf[pos++];
         }
-
+        for(i=send_len; i < (HID_OUTPUT_MAX_LEN);i++){
+            i2c_buf[i+2] = 0;
+        }
         sended_len += send_len;
 
-        ret = writeData( i2c_buf, HID_I2C_OUTPUT_MAX_LEN);
+        ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
+
         if(ret == -1)
         {
             LOG_G2_I(CLog::getLogOwner(), TAG, "Boot Write error2");
@@ -1314,7 +1427,7 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
     {
         retry_ack--;
         waitRxData(m_fd, uSecWait); //30ms
-        ret = readData(buf, 64, 0x13, 0x06 );
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
 
         if(ret > 2)
         {
@@ -1347,7 +1460,7 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
     while(pos < size)
     {
         waitRxData(m_fd, uSecWait); //30ms
-        iRet = readData(m_pcReadBuf, HID_I2C_OUTPUT_MAX_LEN, 0, 0); //dump
+        iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, 0, 0); //dump
 
         if( read_retry == 0)
         {
@@ -1370,33 +1483,33 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
                 delete m_pcReadBuf;
                 return false;
             }
-            memcpy(dump_buffer+pos, m_pcReadBuf+16, 45);
+            memcpy(dump_buffer+pos, m_pcReadBuf+16, iRet-16);
 
-            if(packet_length >= 46)
+            if((int)packet_length >= iRet-15)
             {
-                packet_length-=46;
+                packet_length-= (iRet-15);
             }
             else
             {
                 packet_length =0;
             }
 
-            pos+=45;
+            pos+=(iRet-16);
         }
         else
         {
-            memcpy(dump_buffer+pos, m_pcReadBuf+2, 59);
+            memcpy(dump_buffer+pos, m_pcReadBuf+2, iRet-2);
 
-            if(packet_length >= 61)
+            if((int)packet_length >= iRet)
             {
-                packet_length-=61;
+                packet_length-=iRet; //+report id
             }
             else
             {
                 packet_length=0;
             }
 
-            pos+=59;
+            pos+=(iRet-2);
         }
 
         LOG_G2_I(CLog::getLogOwner(), TAG, "remain packet_length : %x",packet_length);
@@ -1420,14 +1533,10 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
     }
 
     unsigned char Buf[22] ;
-    Buf[idx++] = ((HID_I2C_OUTPUT_REGISTER >> 8) & 0x00FF);
-    Buf[idx++] = (HID_I2C_OUTPUT_REGISTER & 0x00FF);
 
-    Buf[idx++] = ((HID_I2C_OUTPUT_WO_LEN >> 8) & 0x00FF);
-    Buf[idx++] = (HID_I2C_OUTPUT_WO_LEN & 0x00FF);
-
-    Buf[idx++] = 0x0A;
+    Buf[idx++] = HID_OUT_REPORT_ID;
     Buf[idx++] = index;
+
     Buf[idx++] =  TOKEN_STX1 ;
     Buf[idx++] =  TOKEN_STX2 ;
     Buf[idx++] =  (unsigned char)0x13 ;

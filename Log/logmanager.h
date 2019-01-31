@@ -87,6 +87,8 @@ namespace G2
             CLog(std::string owner);
             ~CLog();
 
+            CLog(const CLog&);
+            CLog& operator=(const CLog&);
             static std::map<std::string, CLog*> & createInstanceMap();
             void init();
             const std::string getLogLabelStr(LogLabel logLabel);
@@ -118,7 +120,6 @@ namespace G2
 
             LogLabel m_logLabelOrder[LABEL_COUNT];
     };
-
 } // G2
 
 #define LOG_G2(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_G2()) \

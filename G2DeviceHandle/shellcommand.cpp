@@ -22,28 +22,30 @@ ShellCommand::exec(const char* cmd)
     std::string result = "";
     FILE* pipe = popen(cmd, "r");
 	
-    if(!pipe)
+    if (!pipe)
     {
         printf("ShellCommand::exec, popen() failed!\n");
     }
-	
-    try 
+    else
     {
-        while(!feof(pipe))
+
+        //try 
+        //{
+        while (!feof(pipe))
         {
-            if(fgets(buffer, 128, pipe) != NULL)
+            if (fgets(buffer, 128, pipe) != NULL)
             {
                 result += buffer;
-            }  
+            }
         }
-    } 
-    catch(...)
-    {
+        //} 
+        //catch(...)
+        //{
+        //    pclose(pipe);
+        //    printf("ShellCommand::exec, failed! (...)\n");
+        //}
         pclose(pipe);
-        printf("ShellCommand::exec, failed! (...)\n");
     }
-    pclose(pipe);
-	
     return result;
 }
 

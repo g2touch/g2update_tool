@@ -220,7 +220,7 @@ CLog::setLogFormat(LogFormat logFormat)
         setLogFormat(
                     LABEL_TIMESTAMP,
                     LABEL_LEVEL,
-                    LABEL_TAG,
+                    LABEL_FUNCTION,
                     LABEL_FILE,
                     LABEL_LINE
                     );
@@ -357,13 +357,13 @@ CLog::printLogFormat()
     /* print */
     if( m_logType & LOG_TYPE_LOGCAT )
     {
-        printf(fmt);
+        printf("%s",fmt);
         fflush(stdout);
     }
 
     if( m_logFile && (m_logType & LOG_TYPE_FILE) )
     {
-        fprintf(m_logFile, fmt);
+        fprintf(m_logFile, "%s", fmt);
         fflush(m_logFile);
     }
 }

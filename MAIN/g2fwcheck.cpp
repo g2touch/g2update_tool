@@ -32,6 +32,12 @@ int main(int argc, char *argv[])
 
     nArgParseResult = argHandle->ParseArg(argc - 1, argv + 1);
 
+    if (handleParsedArgument(argHandle) < 0)
+    {
+    	EXIT_CODE = EXIT_PASS;
+    	delete argHandle;
+    	RETURN_EXIT_CODE;    // exit if help required
+    }
     switch (nArgParseResult)
     {
         case 0:     // no general err
@@ -51,12 +57,6 @@ int main(int argc, char *argv[])
 
     printf("g2fwcheck-%s\n", APP_VERSION);
 
-    if (handleParsedArgument(argHandle) < 0)
-    {
-    	EXIT_CODE = EXIT_PASS;
-    	delete argHandle;
-    	RETURN_EXIT_CODE;    // exit if help required
-    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     CDeviceHandler *devHandler = new CDeviceHandler(argHandle);

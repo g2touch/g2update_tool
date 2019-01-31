@@ -40,6 +40,12 @@ using namespace G2::DeviceIO;
 
 CDeviceHandler::CDeviceHandler(CArgHandler *argHandle) :
 	DeviceIO_hid_over_i2c(argHandle),
+        m_bBootUpdateforce(false),
+        m_bVerHex(false),
+        m_devPath(""),
+        m_VID(0),
+        m_PID(0),
+        m_hidrawNode(""),
 	m_bFWVerReceived(false),
 	m_sFwVersion("")
 {
@@ -231,9 +237,13 @@ bool CDeviceHandler::CheckFirmwareVersion(int v_format)
     {
         LOG_G2(CLog::getLogOwner(), TAG, "G2TOUCH Touch Firmware Version : %s", m_sFwVersion.c_str());
     }
-    else
+    else if(v_format == 1 && m_bFWVerReceived != 0)
     {
         LOG_G2(CLog::getLogOwner(), TAG, "(HEX)G2TOUCH Touch Firmware Version : %s", m_sFwVersion.c_str());
+    }
+    else
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Check FW version Failed");
     }
 
     return m_bFWVerReceived;

@@ -7,8 +7,7 @@
 #include "packet.h"
 #include <list>
 
-#define MAX_BUFFER_SIZE_HID_OVER_I2C 64
-#define FORMAT_FW_VERSION_STRING	("%d.%d.%d")
+#define RXDBGBUFSIZE (4*1024)
 
 using namespace std;
 using namespace ARG;
@@ -28,6 +27,8 @@ namespace G2
 
                 int writeData(unsigned char * buf, int size, int timeoutMsec);
                 int readData( unsigned char * buf, int size, int Maincommend, int Subcommend);
+                int ReadDataPush( unsigned char * s_buf, int size);
+                int ParsePushedData( unsigned char * s_buf, int size, int Maincommend, int Subcommend, int chk_ack);
 
                 bool isUsingIOCTL();
 
@@ -46,7 +47,8 @@ namespace G2
 #ifdef USE_EXCEPTION
                 void throwNotSupportException(std::string functionName);
 #endif
-
+                DeviceIO_hid_over_i2c(const G2::DeviceIO::DeviceIO_hid_over_i2c&); // copy constructor
+                DeviceIO_hid_over_i2c & operator = (const G2::DeviceIO::DeviceIO_hid_over_i2c&); // override
                 int waitRxData(int &fd, int uSec);
                 int GetCmdWaitAckTime(unsigned char cmd, int mSec);
                 int CreateCmdBuffer(unsigned char cmd, unsigned char* data, int data_len);
@@ -72,10 +74,14 @@ namespace G2
 
             private:
                 int m_fd;
-                unsigned char* m_buffer;
+                unsigned char* out_buffer;
+                unsigned char* in_buffer;
+                unsigned char* rxdbgbuf;
                 rxUnit *tmpRxUnit;
                 unsigned int index;
                 unsigned int packet_length;
+                unsigned int dbgidx_push;
+                unsigned int dbgidx_pop;
                 bool m_bOpened;
         };
 

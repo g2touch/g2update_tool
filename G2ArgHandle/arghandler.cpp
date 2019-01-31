@@ -21,12 +21,14 @@ using namespace G2;
 #define KEY_DEF_FILE            "-file"
 
 CArgHandler::CArgHandler() :
-	m_bOptionBootForce(false),
-	m_sInterface(""),
-	m_sInterfaceResolved(""),
-	m_sWholeParam(""),
-	m_bOptionDebug(false),
-	m_bOptionHelp(false),
+    m_sWholeParam(""),
+    m_sInterface(""),
+    m_sInterfaceResolved(""),
+    m_sBinFilePath(""),
+    m_bOptionHelp(false),
+    m_bOptionDebug(false),
+    m_sLogFile(""),
+    m_bOptionBootForce(false),
 	m_bOptionVerHex(false)
 {
 
@@ -49,7 +51,7 @@ int CArgHandler::ParseArg(int argc, char *argv[])
         return nRet;
     }
 
-    FullArg = string(argv[0]);  // set first item
+    FullArg = string(argv[0]);													// set first item
     for (int i = 0; i < argc; ++i)
     {
         // TODO: duplicate argument check (how to ?)
@@ -154,7 +156,7 @@ bool CArgHandler::ResolveInterface()
     }
 
     m_sInterfaceResolved = deviceID;
-    LOG_G2_I(CLog::getLogOwner(), TAG, "set deviceID : \"%s\"", m_sInterfaceResolved.c_str());
+    LOG_G2_D(CLog::getLogOwner(), TAG, "set deviceID : \"%s\"", m_sInterfaceResolved.c_str());
 
     return true;
 }

@@ -22,7 +22,8 @@ namespace G2
             }
 
         protected:
-            Exception(){}
+            Exception():
+                m_msg(0){}
             std::string m_msg;
     };
 
