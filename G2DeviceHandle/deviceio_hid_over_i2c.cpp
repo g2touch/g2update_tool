@@ -1481,8 +1481,14 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
             continue;
         }
 
-        if(pos == 0)
-        {
+		if (pos == 0)
+		{
+			if (m_pcReadBuf[4] != 0x13) {
+				LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# ############ %2X %2X %2X %2X "
+					, m_pcReadBuf[4], m_pcReadBuf[5], m_pcReadBuf[6], m_pcReadBuf[7]);
+				continue;
+			}
+
             int rx_addr = ((unsigned int)m_pcReadBuf[8] << 24 | (unsigned int)m_pcReadBuf[9] << 16 | (unsigned int)m_pcReadBuf[10] << 8 | (unsigned int)m_pcReadBuf[11]);
 
             if(m_nReadAddr != rx_addr)
