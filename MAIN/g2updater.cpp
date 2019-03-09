@@ -25,8 +25,6 @@ int main(int argc, char *argv[])
     USING_EXIT_CODE;
     CArgHandler* argHandle = 0x0;
 
-	CLog::SaveHistory("=== start main() ");
-
     ////////////////////////////////////////////////////////////////////
     // Input Argument Handling
     argHandle = new CArgHandler();
@@ -54,7 +52,7 @@ int main(int argc, char *argv[])
             return EXIT_CODE;
     }
 
-    //printf("g2updater-%s\n", APP_VERSION);
+    printf("g2updater-%s\n", APP_VERSION);
 
     // Interface parameter handling
     if (argHandle->IsDownloadable())
@@ -88,7 +86,6 @@ int main(int argc, char *argv[])
             if (nUpdateResult <= 0)
             {
             	EXIT_CODE = EXIT_FAIL;
-				CLog::SaveHistory("=== ProcHandler->DoUpdate(devHandler) ");
             }
             else
             {

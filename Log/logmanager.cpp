@@ -3,17 +3,6 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
-/* Unix */
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-/* C */
-#include <stdlib.h>
-#include <errno.h>
-#include <fstream>
 
 #ifdef WIN32
 #include "Windows.h"
@@ -22,9 +11,8 @@
 #endif
 
 //#define __DEBUG
-using namespace std;
-using namespace G2;
 
+using namespace G2;
 
 #define TAG "CLog"
 
@@ -446,18 +434,7 @@ CLog::printLog(const char* level, const char* tag, const char* function, const c
         va_end( arglist );
         fflush(m_logFile);
     }
-
-	/* for test */
-	memset(fmt, 0x00, 1024);
-	va_list lp_start;
-	va_start(lp_start, message);
-	vsprintf( fmt, message, lp_start);
-	va_end(lp_start);
-	 
-	CLog::SaveHistory(fmt);
-
     delete [] fmt;
-
 }
 
 void
@@ -494,18 +471,7 @@ CLog::printG2Log(const char* tag, const char* function, const char* file, const 
         fflush(m_logFile);
     }
 
-	/* for test */
-	memset(fmt, 0x00, 1024);
-	va_list lp_start;
-	va_start(lp_start, message);
-	vsprintf(fmt, message, lp_start);
-	va_end(lp_start);
-
-	CLog::SaveHistory(fmt);
-
     delete [] fmt;
-
-	
 }
 
 void
@@ -579,22 +545,3 @@ CLog::appendLabelOwner(char* fmt)
     strcat(fmt, "]");
 }
 
-void CLog::SaveHistory(const char* msg)
-{
-
-	string historyfname = "/usr/sbin/log/debugmsg.txt";
-	fstream fs;
-
-	fs.open(historyfname.c_str(), std::fstream::out | std::fstream::app | std::fstream::ate);
-
-	time_t t = time(NULL);
-	struct tm tm = *localtime(&t);
-	char buf[2048];
-
-	sprintf(buf, "%d-%d-%d %d:%d:%d  %s", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec , msg);
-
-	fs << buf ;
-	fs << buf << endl;
-
-	fs.close();
-}

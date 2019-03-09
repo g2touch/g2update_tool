@@ -4,18 +4,6 @@
 #include <stdio.h>
 #include <string>
 #include <map>
-/* Unix */
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-/* C */
-#include <stdlib.h>
-#include <errno.h>
-#include <fstream>
-
 #include "G2logdllexportdefine.h"
 
 /* Log Type */
@@ -131,41 +119,22 @@ namespace G2
             bool m_G2Visible;
 
             LogLabel m_logLabelOrder[LABEL_COUNT];
-
-	public:
-			static void SaveHistory(const char* msg);
     };
 } // G2
 
-#define LOG_G2(LogOwner, tag, message, ...) if(LogOwner != 0 ) \
+#define LOG_G2(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_G2()) \
     LogOwner->printG2Log( tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
 
-#define LOG_G2_D(LogOwner, tag, message, ...) if(LogOwner != 0 ) \
+#define LOG_G2_D(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_D()) \
     LogOwner->printLog(LEVEL_DEBUG,   tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
 
-#define LOG_G2_I(LogOwner, tag, message, ...) if(LogOwner != 0 ) \
+#define LOG_G2_I(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_I()) \
     LogOwner->printLog(LEVEL_INFO,    tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
 
-#define LOG_G2_W(LogOwner, tag, message, ...) if(LogOwner != 0 ) \
+#define LOG_G2_W(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_W()) \
     LogOwner->printLog(LEVEL_WARNING, tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
 
-#define LOG_G2_E(LogOwner, tag, message, ...) if(LogOwner != 0 ) \
+#define LOG_G2_E(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_E()) \
     LogOwner->printLog(LEVEL_ERROR,   tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
-
-
-//#define LOG_G2(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_G2()) \
-//    LogOwner->printG2Log( tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
-//
-//#define LOG_G2_D(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_D()) \
-//    LogOwner->printLog(LEVEL_DEBUG,   tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
-//
-//#define LOG_G2_I(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_I()) \
-//    LogOwner->printLog(LEVEL_INFO,    tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
-//
-//#define LOG_G2_W(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_W()) \
-//    LogOwner->printLog(LEVEL_WARNING, tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
-//
-//#define LOG_G2_E(LogOwner, tag, message, ...) if(LogOwner != 0 && LogOwner->isLOG_E()) \
-//    LogOwner->printLog(LEVEL_ERROR,   tag, __FUNCTION__, __FILE__, __LINE__, message, ##__VA_ARGS__)
 
 #endif // LOGMANAGER_H

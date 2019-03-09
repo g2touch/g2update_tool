@@ -356,7 +356,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
     else
     {
         ret = read(m_fd, buf, size);
-		
+
         if( ret > 0 )
         {
             if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2) )
@@ -432,7 +432,6 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
         }
         else if(ret <= 0)
         {
-			LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::readData : ret[%d] <= 0 " , ret );
             return 0;
         }
 
@@ -1460,17 +1459,11 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
     while(pos < size)
     {
-		LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :waitRxData");
-
         waitRxData(m_fd, uSecWait); //30ms
-
-		LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :waitRxData");
-
         iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, 0, 0); //dump
 
         if( read_retry == 0)
         {
-			LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :if( read_retry == 0)");
             delete m_pcReadBuf;
             return false ;
         }
@@ -1481,20 +1474,14 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
             continue;
         }
 
-		if (pos == 0)
-		{
-			if (m_pcReadBuf[4] != 0x13) {
-				LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# ############ %2X %2X %2X %2X "
-					, m_pcReadBuf[4], m_pcReadBuf[5], m_pcReadBuf[6], m_pcReadBuf[7]);
-				continue;
-			}
-
+        if(pos == 0)
+        {
+			if(m_pcReadBuf[4] !=0x13)continue;
+			
             int rx_addr = ((unsigned int)m_pcReadBuf[8] << 24 | (unsigned int)m_pcReadBuf[9] << 16 | (unsigned int)m_pcReadBuf[10] << 8 | (unsigned int)m_pcReadBuf[11]);
 
             if(m_nReadAddr != rx_addr)
             {
-				LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :m_nReadAddr :rx_addr [%X] " , rx_addr);
-
                 delete m_pcReadBuf;
                 return false;
             }

@@ -128,27 +128,27 @@ bool CArgHandler::ResolveInterface()
     string hidrawNum = m_sInterface;
     if (hidrawNum.substr(0, hidrawStr.size()) == hidrawStr) // if startswith "hidraw"
     {
-        /* find ls_sys_class_hidraw_hidrawN */
-        string cmd_ls_sys_class_hidraw_hidrawN = "ls -l /sys/class/hidraw/"; // " ls -l /sys/class/hidraw/hidraw* "
-        cmd_ls_sys_class_hidraw_hidrawN.append(hidrawNum);
-        LOG_G2_D(CLog::getLogOwner(), TAG, "cmd : %s", cmd_ls_sys_class_hidraw_hidrawN.c_str());
-        std::string ls_sys_class_hidraw_hidrawN = ShellCommand::exec(cmd_ls_sys_class_hidraw_hidrawN.c_str());
-        LOG_G2_D(CLog::getLogOwner(), TAG, "output : %s", ls_sys_class_hidraw_hidrawN.c_str());
+    	/* find ls_sys_class_hidraw_hidrawN */
+    	string cmd_ls_sys_class_hidraw_hidrawN = "ls -l /sys/class/hidraw/"; // " ls -l /sys/class/hidraw/hidraw* "
+    	cmd_ls_sys_class_hidraw_hidrawN.append(hidrawNum);
+    	LOG_G2_D(CLog::getLogOwner(), TAG, "cmd : %s", cmd_ls_sys_class_hidraw_hidrawN.c_str());
+    	std::string ls_sys_class_hidraw_hidrawN = ShellCommand::exec(cmd_ls_sys_class_hidraw_hidrawN.c_str());
+    	LOG_G2_D(CLog::getLogOwner(), TAG, "output : %s", ls_sys_class_hidraw_hidrawN.c_str());
 
-        /* parse to deviceID */
-        string keywordStr1 = "-> ../../";
-        string keywordStr2 = "/hidraw/hidraw";
-        if (ls_sys_class_hidraw_hidrawN.find(keywordStr1) != string::npos &&
-            ls_sys_class_hidraw_hidrawN.find(keywordStr2) != string::npos)
-        {
-            string tmpDeviceID = ls_sys_class_hidraw_hidrawN;
-            tmpDeviceID = tmpDeviceID.substr(tmpDeviceID.find(keywordStr1) + keywordStr1.size(), tmpDeviceID.size());
-            tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find(keywordStr2));
-            tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find_last_of("/")); // remove device (0000:0000:0000.0000)
+    	/* parse to deviceID */
+    	string keywordStr1 = "-> ../../";
+    	string keywordStr2 = "/hidraw/hidraw";
+    	if (ls_sys_class_hidraw_hidrawN.find(keywordStr1) != string::npos &&
+    		ls_sys_class_hidraw_hidrawN.find(keywordStr2) != string::npos)
+    	{
+    		string tmpDeviceID = ls_sys_class_hidraw_hidrawN;
+    		tmpDeviceID = tmpDeviceID.substr(tmpDeviceID.find(keywordStr1) + keywordStr1.size(), tmpDeviceID.size());
+    		tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find(keywordStr2));
+    		tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find_last_of("/")); // remove device (0000:0000:0000.0000)
 
-            deviceID = "/sys/";
-            deviceID.append(tmpDeviceID);
-        }
+    		deviceID = "/sys/";
+    		deviceID.append(tmpDeviceID);
+    	}
     }
     else
     {
@@ -160,7 +160,6 @@ bool CArgHandler::ResolveInterface()
 
     return true;
 }
-
 
 string CArgHandler::GetWholeParam()
 {
