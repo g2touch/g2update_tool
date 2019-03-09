@@ -984,14 +984,14 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         //boot_ver check
         if(nRequestResult == 1)
         {
-            LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
+            //LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
             LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
             return nRequestResult; //boot_ver same
         }
         else
         {
-            LOG_G2(CLog::getLogOwner(), TAG, "Different Bootloader, Bootloader Update Needed");
+            //LOG_G2(CLog::getLogOwner(), TAG, "Different Bootloader, Bootloader Update Needed");
             LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
         }
@@ -1051,7 +1051,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 
     if(nRequestResult == 1)
     {
-        LOG_G2(CLog::getLogOwner(), TAG, "Bootloader Update Success");
+        //LOG_G2(CLog::getLogOwner(), TAG, "Bootloader Update Success");
     }
     else
     {

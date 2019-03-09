@@ -3,6 +3,17 @@
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+/* Unix */
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+/* C */
+#include <stdlib.h>
+#include <errno.h>
+#include <fstream>
 
 #ifdef WIN32
 #include "Windows.h"
@@ -11,8 +22,9 @@
 #endif
 
 //#define __DEBUG
-
+using namespace std;
 using namespace G2;
+
 
 #define TAG "CLog"
 
@@ -435,6 +447,8 @@ CLog::printLog(const char* level, const char* tag, const char* function, const c
         fflush(m_logFile);
     }
     delete [] fmt;
+
+	CLog::SaveHistory(message);
 }
 
 void
@@ -472,6 +486,8 @@ CLog::printG2Log(const char* tag, const char* function, const char* file, const 
     }
 
     delete [] fmt;
+
+	CLog::SaveHistory(message);
 }
 
 void
@@ -545,3 +561,17 @@ CLog::appendLabelOwner(char* fmt)
     strcat(fmt, "]");
 }
 
+
+
+void CLog::SaveHistory(const char* msg)
+{
+
+	string historyfname = "/usr/sbin/log/debugmsg.txt";
+	fstream fs;
+
+	fs.open(historyfname.c_str(), std::fstream::out | std::fstream::app | std::fstream::ate);
+
+	fs << msg << endl;
+
+	fs.close();
+}
