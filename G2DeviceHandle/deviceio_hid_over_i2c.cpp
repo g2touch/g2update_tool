@@ -356,7 +356,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
     else
     {
         ret = read(m_fd, buf, size);
-
+		
         if( ret > 0 )
         {
             if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2) )
@@ -432,6 +432,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
         }
         else if(ret <= 0)
         {
+			LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::readData : ret[%d] <= 0 " , ret );
             return 0;
         }
 
@@ -984,14 +985,14 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         //boot_ver check
         if(nRequestResult == 1)
         {
-            //LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
+            LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
             LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
             return nRequestResult; //boot_ver same
         }
         else
         {
-            //LOG_G2(CLog::getLogOwner(), TAG, "Different Bootloader, Bootloader Update Needed");
+            LOG_G2(CLog::getLogOwner(), TAG, "Different Bootloader, Bootloader Update Needed");
             LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
         }
@@ -1051,7 +1052,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 
     if(nRequestResult == 1)
     {
-        //LOG_G2(CLog::getLogOwner(), TAG, "Bootloader Update Success");
+        LOG_G2(CLog::getLogOwner(), TAG, "Bootloader Update Success");
     }
     else
     {
@@ -1459,11 +1460,17 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
     while(pos < size)
     {
+		LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :waitRxData");
+
         waitRxData(m_fd, uSecWait); //30ms
+
+		LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :waitRxData");
+
         iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, 0, 0); //dump
 
         if( read_retry == 0)
         {
+			LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :if( read_retry == 0)");
             delete m_pcReadBuf;
             return false ;
         }
@@ -1480,6 +1487,8 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
             if(m_nReadAddr != rx_addr)
             {
+				LOG_G2_D(CLog::getLogOwner(), TAG, "#TEST# DeviceIO_hid_over_i2c::Dump :m_nReadAddr :rx_addr [%X] " , rx_addr);
+
                 delete m_pcReadBuf;
                 return false;
             }
