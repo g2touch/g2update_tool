@@ -33,12 +33,16 @@ namespace G2
                 bool IsDeviceOpened();
                 bool CheckFirmwareVersion(int v_format);
                 bool G2Update(unsigned char* file_buf);
+                bool CheckAndCreate2(string folder);
+                void SaveHistory(string msg);
+                string GetDateTimeString();
 
                 bool m_bBootUpdateforce;
                 bool m_bVerHex;
+                string log_path;
 
             private:
-                string m_devPath;       // have device path resolved
+                string m_devPath;		// have device path resolved
                 short m_VID;
                 short m_PID;
 
