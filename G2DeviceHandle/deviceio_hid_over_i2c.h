@@ -34,12 +34,11 @@ namespace G2
 
                 bool isDeviceOpened();
                 string TxRequestFwVer(int mSec, int format);
-                int TxRequestHW_Reset(bool chkack, int trial);
+                int TxRequestHW_Reset();
                 int TxRequestSystem_Reset();
                 int TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update);
                 int TxRequestFwUpdate(unsigned char* file_buf);
                 int TxRequestCuUpdate(unsigned char* file_buf);
-                int ReadDataAll(int duration);
 
             protected:
                 void initBuffer();
@@ -65,14 +64,13 @@ namespace G2
                 int FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd);
                 int CU_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, int cu_page);
                 int Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd);
-                int Dump(unsigned char* out_buf, int address, unsigned int size, int ntime);
-                int FlashDump(int address, int size);
+                int Dump(unsigned char* dump_buffer, int address, int size);
+                int FlashDump(int address, int size, int m_nReadBufCnt, unsigned char index);
                 int FlashCheckSum_Check(unsigned char* buf, unsigned int fw_checksum);
                 int FlashFinish_Check(unsigned char* read_buf);
                 int Fw_write_size(unsigned char* file_buf);
                 int Cu_Erase_data(unsigned char* file_buf);
                 int dumpTofile_compare(unsigned char* dump_buf, unsigned char* file_buf, int compare_size);
-                void Pos_init(bool init_idx);
 
             private:
                 int m_fd;
@@ -81,12 +79,10 @@ namespace G2
                 unsigned char* rxdbgbuf;
                 rxUnit *tmpRxUnit;
                 unsigned int index;
-                unsigned int m_packetlength;
+                unsigned int packet_length;
                 unsigned int dbgidx_push;
                 unsigned int dbgidx_pop;
                 bool m_bOpened;
-                unsigned int read_pos;
-                unsigned int buf_pos;
         };
 
     }

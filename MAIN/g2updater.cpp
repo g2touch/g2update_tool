@@ -20,9 +20,6 @@ int handleParsedArgument(CArgHandler *arg);
 
 int main(int argc, char *argv[])
 {
-    string currfolder = string(argv[0], 0, (strrchr(argv[0], '/') - argv[0]));
-    string logfolder = currfolder + "/log";
-
     int nArgParseResult = -1;
     int nUpdateResult = -1;
     USING_EXIT_CODE;
@@ -49,14 +46,10 @@ int main(int argc, char *argv[])
             }
             break;
         default:    // general parameter err
-            #if !defined(USE_HID_USB)
             nArgParseResult = -10;
             LOG_G2_E(CLog::getLogOwner(), "PARSE_ARGS", "PraseErrorInformation: %s", argHandle->GetWholeParam().c_str());
             EXIT_CODE = EXIT_FLOW_ERROR;
             return EXIT_CODE;
-            #else
-            break;
-            #endif
     }
 
     printf("g2updater-%s\n", APP_VERSION);
@@ -76,16 +69,8 @@ int main(int argc, char *argv[])
     ///////////////////////////////////////////////////////////////////////////////////////////
     CDeviceHandler *devHandler = new CDeviceHandler(argHandle);
 
-    if (devHandler->CheckAndCreate(logfolder) == false)
-        logfolder = currfolder;
-    devHandler->log_path = logfolder;
-
     // Prepare Update. Open & Get Hid Info (VID will be Checked at here)
-    #if defined(USE_HID_USB)
-    devHandler->findHidrawNum();
-    #else
     devHandler->openDevice();
-    #endif
 
     if (devHandler->IsDeviceOpened() && argHandle->GetBinFilePath().npos > 0)
     {

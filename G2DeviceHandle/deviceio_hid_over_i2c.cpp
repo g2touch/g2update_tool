@@ -93,8 +93,8 @@ using namespace G2::DeviceIO;
 
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
     m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
-    index(0), m_packetlength(0), dbgidx_push(0), dbgidx_pop(0),
-	m_bOpened(false), read_pos(0), buf_pos(0)
+    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0),
+	m_bOpened(false)
 {
     /* malloc out_buffer, in_buffer */
     out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
@@ -102,7 +102,7 @@ DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
     rxdbgbuf = new unsigned char[RXDBGBUFSIZE];
     initBuffer();
     index =0;
-    m_packetlength=0;
+    packet_length=0;
     tmpRxUnit = new rxUnit();
     dbgidx_push = 0;
     dbgidx_pop = 0;
@@ -346,131 +346,95 @@ end:
 int
 DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand, int Subcommand)
 {
-    int ret = -2;
+    int ret = 0;
     int stx_etx_ret=0;
 
-    ret = read(m_fd, buf, size);
-
-    if( ret > 0 )
+    if(isUsingIOCTL())
     {
-        if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2)  && (buf_pos == 0) )
+        ret = ioctl(m_fd, HIDIOCGFEATURE(size), buf);
+    }
+    else
+    {
+        ret = read(m_fd, buf, size);
+
+        if( ret > 0 )
         {
-            m_packetlength = (((unsigned int)(buf[5] << 8) + (unsigned int)buf[6]))& 0xffff;
+            if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2) )
+            {
+                packet_length = (((unsigned int)(buf[5] << 8) + (unsigned int)buf[6]))& 0xffff;
 
-            if((Maincommand == 0xF1) && (buf[4] == 0x51))
-            {
-                if(strstr((char *)&buf[7],"Not Supprot Command(0xF1") != NULL )
+                if((Maincommand == 0xF1) && (buf[4] == 0x51) && (Maincommand != 0))
                 {
-                    LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in Bootloader.. ");
-                }
-                else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
-                {
-                    LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in USB Bootloader.. ");
-                }
-                else
-                {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "version get.. strange response %02x %02x ", buf[4], Maincommand);
-                    return -2; //error
-                }
-            }
-
-            else if((buf[4] != Maincommand) && (Maincommand != 0))
-            {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
-                return 0; //error
-            }
-
-            if((buf[7] != Subcommand) && (Subcommand != 0))
-            {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
-                return 0;  //error
-            }
-
-            if(m_packetlength <= ONE_PACKET_MAXBODY )
-            {
-                if(( buf[7+m_packetlength] == TOKEN_ETX1) && (buf[8+m_packetlength] == TOKEN_ETX2))
-                {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "Rx OK ");
-                    stx_etx_ret = 1;
-                }
-            }
-            else if((int)m_packetlength == ((ret-ONE_PACKET_EXCEPT_BODY)-1)) //divede to ext1, etx2
-            {
-                buf_pos +=((ret-ONE_PACKET_EXCEPT_BODY)-1);
-
-                if(( buf[ret-1] == TOKEN_ETX1))
-                {
-                    //m_packetlength=0;
-                    stx_etx_ret = 1;
-                }
-            }
-            else if((int)m_packetlength >= (ret-ONE_PACKET_EXCEPT_BODY)) //reportid 2 + stx 2 + maincmd + 1 + length 2
-            {
-                buf_pos +=(ret-ONE_PACKET_EXCEPT_BODY);
-                stx_etx_ret = 1;
-            }
-            else
-            {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "end packet different1 : %02x %02x ", buf[7+m_packetlength] , buf[8+m_packetlength] );
-                m_packetlength=0;
-                return -2; //errors
-            }
-        }
-        else if(buf_pos <= m_packetlength)
-        {
-            if(m_packetlength == (buf_pos +1)) //divede to ext1, etx2
-            {
-                if(( buf[ret-1] == TOKEN_ETX1))
-                {
-                    buf_pos+=(ret-REPORT_ID_INDEX_SIZE);
-                    stx_etx_ret = 1;
-                }
-                else
-                {
-                    stx_etx_ret = 0;
-                }
-            }
-            else
-            {
-                buf_pos+=(ret-REPORT_ID_INDEX_SIZE);
-                stx_etx_ret = 1;
-
-
-                //last packet
-                if(buf_pos > m_packetlength)
-                {
-                    int nPos_etx = ((m_packetlength+ONE_PACKET_EXCEPT_BODY)%(ret-REPORT_ID_INDEX_SIZE));
-
-                    if(nPos_etx == 1) //divide packet EXT1, ETX2
+                    if(strstr((char *)&buf[7],"Not Supprot Command(0xF1") != NULL )
                     {
-                        if(( buf[2] == TOKEN_ETX2))
-                        {
-                            //m_packetlength=0;
-                            stx_etx_ret = 1;
-                        }
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in Bootloader.. ");
                     }
-                    else if(( buf[nPos_etx] == TOKEN_ETX1) && (buf[nPos_etx+1] == TOKEN_ETX2))
+                    else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
                     {
-                        stx_etx_ret = 1;
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in USB Bootloader.. ");
                     }
                     else
                     {
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "nPos_etx : %02x end packet different : %02x %02x ",nPos_etx, buf[nPos_etx] , buf[nPos_etx+1] );
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "buf_pos : %02x m_packetlength : %02x ",buf_pos, m_packetlength);
-                        stx_etx_ret = 0;
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "version get.. strange response %02x %02x ", buf[4], Maincommand);
+                        return 0; //error
                     }
+
+                }
+                else if((buf[4] != Maincommand) && (Maincommand != 0))
+                {
+                    LOG_G2_I(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
+                    return 2; //error
+                }
+
+                if((buf[7] != Subcommand) && (Subcommand != 0))
+                {
+                    LOG_G2_I(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
+                    return 2; //error
+                }
+
+                if(( buf[7+packet_length] == TOKEN_ETX1) && (buf[8+packet_length] == TOKEN_ETX2))
+                {
+                    stx_etx_ret = 1;
+                }
+                else if(packet_length > 45)
+                {
+                    stx_etx_ret = 1;
+                }
+                else
+                {
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "end packet different1 : %02x %02x ", buf[7+packet_length] , buf[8+packet_length] );
+                    packet_length=0;
+                    return 0; //errors
+                }
+
+            }
+            else if(packet_length > 58)
+            {
+                stx_etx_ret = 1;
+            }
+            else
+            {
+
+                if(( buf[packet_length] == TOKEN_ETX1) && (buf[packet_length+1] == TOKEN_ETX2))
+                {
+                    stx_etx_ret = 1;
+                }
+                else
+                {
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "end packet different2 : %02x %02x ", buf[packet_length] , buf[packet_length] );
+                    stx_etx_ret = 0;
                 }
             }
+
+            if(stx_etx_ret == 0)
+                ret = 0;
+            /* --- */
+        }
+        else if(ret <= 0)
+        {
+            return 0;
         }
 
-        if(stx_etx_ret == 0)
-            ret = 0;
-        /* --- */
-    }
-    else if(ret <= 0)
-    {
-        LOG_G2_I(CLog::getLogOwner(), TAG, "No Read Data !!");
-        return -2;
     }
 
     return ret;
@@ -562,18 +526,17 @@ int DeviceIO_hid_over_i2c::waitRxData(int &fd, int uSec)
 // TODO: architecture change
 int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* data, int data_len, int uSecWait)
 {
-    int nReadSize = -1;
-    unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
+	int nReadSize = -1;
+	unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
 
-    do{
-        waitRxData(m_fd, uSecWait);
-        nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
-    }while(nReadSize == 0);
-    LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
-    ////////////////////////////////////////////////////////////////////////
-    // Inside of readData, ather commands were ignored in this architecture.
-    if (nReadSize > 2)
-    {
+	waitRxData(m_fd, uSecWait);
+	nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
+
+	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
+	////////////////////////////////////////////////////////////////////////
+	// Inside of readData, ather commands were ignored in this architecture.
+	if (nReadSize > 2)
+	{
         tmpRxUnit->setBuf(tmp_read, nReadSize);
         tmpRxUnit->setSize(nReadSize);
 	}
@@ -602,8 +565,13 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     int size = -1;
     int ret =0;
 
-    ReadDataAll(1000);
-    Pos_init(false);
+    while(size != 0 && nTry++ < 10)
+    {
+        waitRxData(m_fd, uSecWait);
+        size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "size : %d", size);
+    }
+
     size = CreateCmdBuffer(cmd, data, data_len);	// m_buffer allocated
 
     uSecWait = GetCmdWaitAckTime(cmd, mSecWait);  // 30 msec for Normal command, but some command needs more time
@@ -717,7 +685,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     int buf_size = 0;
     int cu_page = 0x320;
     unsigned int base_address = 0x08004000;
-    int nRequestResult = TxRequestHW_Reset(true, CMD_F1_RETRY_MAX);
+    int nRequestResult = TxRequestHW_Reset();
     int retry = 0;
 
     if (nRequestResult <= 0)
@@ -783,12 +751,18 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     }
 
     //Dump & compare
-    nRequestResult = Dump(dump_buffer, base_address, CU_FILE_SIZE, 5000);
-
-    if(nRequestResult < 0)
+    pos = 0;
+    while(pos < CU_FILE_SIZE)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "CU Dump error");
-        return nRequestResult;
+        nRequestResult = Dump(dump_buffer+pos, base_address+pos, DUMP_SIZE);
+
+        if(nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "CU Dump error");
+            return nRequestResult;
+        }
+
+        pos+=DUMP_SIZE;
     }
 
     nRequestResult = dumpTofile_compare(dump_buffer, file_buf+CU_START_POS, CU_FILE_SIZE);
@@ -937,18 +911,15 @@ int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
     return write_size;
 }
 
-int DeviceIO_hid_over_i2c::TxRequestHW_Reset(bool chkack, int trial)
+int DeviceIO_hid_over_i2c::TxRequestHW_Reset()
 {
-    int nRequestResult = TryWriteData(CMD_HW_RESET, NULL, 0, trial, 2000);
+    int nRequestResult = TryWriteData(CMD_HW_RESET, NULL, 0, CMD_F1_RETRY_MAX, 2000);
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "nRequestResult : %d", nRequestResult);
 
-    if(chkack)
+    if (nRequestResult <= 0)
     {
-        if (nRequestResult <= 0)
-        {
-            LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset Error");
-        }
+        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset Error");
     }
 
     return nRequestResult;
@@ -998,9 +969,9 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     if(bBoot_force_update == false) //boot force update option
     {
         char curr_boot[9]={0,}, targ_boot[9]={0,};
-        nRequestResult = Dump(dump_buffer, bootver_address, 0x20, 5000);
+        nRequestResult = Dump(dump_buffer, bootver_address, 0x20);
 
-        if(nRequestResult < 0)
+        if(nRequestResult <= 0)
         {
             LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail");
             return nRequestResult; //boot_ver same
@@ -1027,7 +998,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     }
 
     //HW Reset
-    nRequestResult = TxRequestHW_Reset(true, CMD_F1_RETRY_MAX);
+    nRequestResult = TxRequestHW_Reset();
     if (nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
@@ -1061,12 +1032,19 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     }
 
     //Dump & compare
-    nRequestResult = Dump(dump_buffer, bootstart_address, BOOT_FILE_SIZE, 5000);
-
-    if(nRequestResult < 0)
+    pos = 0;
+    while(pos < BOOT_FILE_SIZE)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "Boot Dump error");
-        return nRequestResult;
+        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
+        nRequestResult = Dump(dump_buffer+pos, bootstart_address+pos, DUMP_SIZE);
+
+        if(nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Boot Dump error");
+            return nRequestResult;
+        }
+
+        pos+=DUMP_SIZE;
     }
 
     nRequestResult = dumpTofile_compare(dump_buffer, file_buf, BOOT_FILE_SIZE);
@@ -1118,9 +1096,6 @@ int DeviceIO_hid_over_i2c::dumpTofile_compare(unsigned char* dump_buffer, unsign
         if(dump_buffer[i] != file_buf[i])
         {
             LOG_G2_D(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i, dump_buffer[i], i, file_buf[i]);
-            LOG_G2_D(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i+1, dump_buffer[i+1], i+1, file_buf[i+1]);
-            LOG_G2_D(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i+2, dump_buffer[i+2], i+2, file_buf[i+2]);
-            LOG_G2_D(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i+3, dump_buffer[i+3], i+3, file_buf[i+3]);
             return 0;
         }
     }
@@ -1237,8 +1212,6 @@ int DeviceIO_hid_over_i2c::FlashFinish_data(unsigned char* buf)
 
 int DeviceIO_hid_over_i2c::FlashFinish_Check(unsigned char* read_buf)
 {
-    LOG_G2_D(CLog::getLogOwner(), TAG, "read_buf[7] : %x read_buf[8] %x",read_buf[7],read_buf[8]);
-
     if((read_buf[7] == G2_SUB_0x13_FLASHFINISH) && (read_buf[8] == 0x00) )
     {
         return 1;
@@ -1306,10 +1279,9 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
     while(retry_ack >= 0)
     {
         retry_ack--;
-        do{
-            waitRxData(m_fd, uSecWait); //30ms
-            ret = readData(buf, HID_INPUT_MAX_LEN, 0xb4, 0 );
-        }while(ret == 0);
+        waitRxData(m_fd, uSecWait); //30ms
+
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0xb4, 0 );
 
         if(ret > 2)
         {
@@ -1381,10 +1353,8 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     while(retry_ack >= 0)
     {
         retry_ack--;
-        do{
-            waitRxData(m_fd, uSecWait); //30ms
-            ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x83 );
-        }while(ret ==0);
+        waitRxData(m_fd, uSecWait); //30ms
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x83 );
 
         if(ret > 2)
         {
@@ -1456,10 +1426,8 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
     while(retry_ack >= 0)
     {
         retry_ack--;
-        do{
-            waitRxData(m_fd, uSecWait); //30ms
-            ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
-        }while(ret == 0);
+        waitRxData(m_fd, uSecWait); //30ms
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
 
         if(ret > 2)
         {
@@ -1472,115 +1440,111 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
 }
 
 
-int DeviceIO_hid_over_i2c::Dump(unsigned char* out_buf, int address, unsigned int size, int ntime)
+int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int size)
 {
-    int nRet = -1;
-    unsigned int dump_size = 0x100;
-    struct timespec start;
-    struct timespec end;
-    long long time_diff = 0;
-    /* convert to seconds */
-    long long ntimeout = (long long)ntime * ONE_MILLION;
+    LOG_G2_I(CLog::getLogOwner(), TAG, "Dump : Verifying Start " ) ;
+    int uSecWait = GetCmdWaitAckTime(0x13, 1000);  // 30 msec for Normal command, but some command needs more time
+    int read_retry = 5;
+    int m_nReadBufCnt=0;
+    int m_nReadAddr = address;
+    unsigned char *m_pcReadBuf;
+    unsigned char index=0x42;
+    int pos=0;
+    int iRet = 0;
 
-    LOG_G2_D(CLog::getLogOwner(), TAG, "Dump START ");
-    Pos_init(false);
-    clock_gettime(CLOCK_MONOTONIC,&start);
+    m_pcReadBuf = new unsigned char[size + 1000];
 
-    while(read_pos < size)
+    iRet = FlashDump(address, size, m_nReadBufCnt, index) ;
+
+
+    while(pos < size)
     {
-        if(size - read_pos < dump_size)
+        waitRxData(m_fd, uSecWait); //30ms
+        iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, 0, 0); //dump
+
+        if( read_retry == 0)
         {
-            dump_size = (size - read_pos);
+            delete m_pcReadBuf;
+            return false ;
         }
 
-        nRet = FlashDump(address+read_pos, dump_size);
-
-        if( nRet < 0)
+        if(iRet == 0)
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Dump Tx cmd fail : %d",nRet);
-            return -1;
+            read_retry--;
+            continue;
         }
 
-        do
+        if(pos == 0)
         {
-            do{
-                waitRxData(m_fd, ntime*1000); //30ms
-                nRet = readData(in_buffer, HID_INPUT_MAX_LEN, CMD_MAIN_CMD, G2_SUB_0x13_FLASH_READ);
-            }while(nRet == 0);
+            if(m_pcReadBuf[4] !=0x13) continue;
 
-            if(nRet < 2)
-            {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "Ackfail : %d",nRet);
-                Pos_init(false);
-                return -1; //error
-            }
+            int rx_addr = ((unsigned int)m_pcReadBuf[8] << 24 | (unsigned int)m_pcReadBuf[9] << 16 | (unsigned int)m_pcReadBuf[10] << 8 | (unsigned int)m_pcReadBuf[11]);
 
-            if(nRet < DUMP_PACKET_EXCEPT_BODY)
+            if(m_nReadAddr != rx_addr)
             {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "Dump error : %d",buf_pos);
-                Pos_init(false);
-                return -1; //error
+                delete m_pcReadBuf;
+                return false;
             }
+            memcpy(dump_buffer+pos, m_pcReadBuf+16, iRet-16);
 
-            if(m_packetlength < (unsigned int)(nRet-ONE_PACKET_EXCEPT_BODY))
+            if((int)packet_length >= iRet-15)
             {
-                memcpy(out_buf+read_pos, in_buffer+DUMP_PACKET_EXCEPT_BODY, (m_packetlength - ONE_EXCEPT_PACKET)); //sub command + address size
-                read_pos += (m_packetlength - ONE_EXCEPT_PACKET);
-            }
-            else if(buf_pos == (unsigned int)(nRet-ONE_PACKET_EXCEPT_BODY))
-            {
-                memcpy(out_buf+read_pos, in_buffer+DUMP_PACKET_EXCEPT_BODY, (nRet - DUMP_PACKET_EXCEPT_BODY)); //sub command + address size
-                read_pos += (nRet - DUMP_PACKET_EXCEPT_BODY);
-            }
-            else if(buf_pos < m_packetlength)
-            {
-                memcpy(out_buf+read_pos, in_buffer+REPORT_ID_INDEX_SIZE, nRet -REPORT_ID_INDEX_SIZE ); //sub command + address size
-                read_pos += (nRet -REPORT_ID_INDEX_SIZE);
+                packet_length-= (iRet-15);
             }
             else
             {
-                memcpy(out_buf+read_pos, in_buffer+REPORT_ID_INDEX_SIZE, (m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) ) ); //sub command + address size
-                read_pos += (m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) );
-                LOG_G2_I(CLog::getLogOwner(), TAG, "(dump_size - buf_pos) : %x",(m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) ));
-                LOG_G2_I(CLog::getLogOwner(), TAG, "read_pos4 : %x, buf_pos: %x",read_pos, buf_pos);
+                packet_length =0;
             }
-        }
-        while(buf_pos < m_packetlength && buf_pos != 0);
-        buf_pos = 0; //repeat 0x100 dump so buf_pos must initialize
 
-        /* Get the end time after each iteration */
-        clock_gettime(CLOCK_MONOTONIC,&end);
-        /* Get the difference between times */
-        time_diff = (NSECTOSEC*(end.tv_sec-start.tv_sec)) + (end.tv_nsec - start.tv_nsec);
-        if(time_diff > ntimeout) {
-            /* timed out before getting an event */
-            LOG_G2_I(CLog::getLogOwner(), TAG, "timed out before getting an event : %Ld %Ld",time_diff, ntimeout);
-            Pos_init(false);
-            return -2;
+            pos+=(iRet-16);
         }
-        LOG_G2_I(CLog::getLogOwner(), TAG, "read_pos : %x, size: %x",read_pos, size);
+        else
+        {
+            memcpy(dump_buffer+pos, m_pcReadBuf+2, iRet-2);
+
+            if((int)packet_length >= iRet)
+            {
+                packet_length-=iRet; //+report id
+            }
+            else
+            {
+                packet_length=0;
+            }
+
+            pos+=(iRet-2);
+        }
+
+        LOG_G2_I(CLog::getLogOwner(), TAG, "remain packet_length : %x",packet_length);
+
     }
 
-    Pos_init(false);
-    return 0;
+    delete m_pcReadBuf;
+
+    return true ;
+
 }
 
-
-int DeviceIO_hid_over_i2c::FlashDump(int address, int size)
+int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, unsigned char index)
 {
     int ret = 0;
     int idx = 0;
-    unsigned char Buf[18] ;
-    // 02 A3 13 LEN[2] 08 ADDR[4B] SIZE[4B] 03 B3
-    Buf[idx++] = 0x0A;
+
+    if( m_nReadBufCnt >= size )
+    {
+        return -1;
+    }
+
+    unsigned char Buf[22] ;
+
+    Buf[idx++] = HID_OUT_REPORT_ID;
     Buf[idx++] = index;
 
     Buf[idx++] =  TOKEN_STX1 ;
     Buf[idx++] =  TOKEN_STX2 ;
-    Buf[idx++] =  (unsigned char)CMD_MAIN_CMD ;
+    Buf[idx++] =  (unsigned char)0x13 ;
     Buf[idx++] =  (unsigned char)0x00 ;
     Buf[idx++] =  (unsigned char)0x09 ;
-    Buf[idx++] =  (unsigned char)G2_SUB_0x13_FLASH_READ ;
+    Buf[idx++] =  (unsigned char)0x08 ;
 
     Buf[idx++]=(address>>24)&0xFF;
     Buf[idx++]=(address>>16)&0xFF;
@@ -1595,58 +1559,9 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size)
     Buf[idx++] =  (unsigned char)0x03 ;
     Buf[idx++] =  (unsigned char)0xb3 ;
 
-    ret = write(m_fd, Buf, idx);
+    ret = writeData(Buf , 22) ;
 
     return ret;
 
 }
 
-void DeviceIO_hid_over_i2c::Pos_init(bool init_idx)
-{
-    buf_pos = 0;
-    read_pos = 0;
-    m_packetlength = 0;
-}
-
-int DeviceIO_hid_over_i2c::ReadDataAll(int duration)
-{
-    int nReadSize = -1;
-    struct timespec start;
-    struct timespec end;
-    long long time_diff = 0;
-    /* convert to seconds */
-    long long ntimeout = (long long)duration * ONE_MILLION;
-
-    Pos_init(false);
-    clock_gettime(CLOCK_MONOTONIC,&start);
-
-    while(1)
-    {
-        waitRxData(m_fd, 40*1000);
-        nReadSize = read(m_fd, in_buffer, READ_SIZE);
-
-        if(nReadSize > 2)
-        {
-            LOG_G2_I(CLog::getLogOwner(), TAG, "Rx DATA ALL");
-        }
-        else
-        {
-            Pos_init(false);
-            LOG_G2_I(CLog::getLogOwner(), TAG, "Rx DATA ALL");
-            return 0;
-        }
-        /* Get the end time after each iteration */
-        clock_gettime(CLOCK_MONOTONIC,&end);
-
-        /* Get the difference between times */
-        time_diff = (NSECTOSEC*(end.tv_sec-start.tv_sec)) + (end.tv_nsec - start.tv_nsec);
-        if(time_diff > ntimeout)
-        {
-            /* timed out before getting an event */
-            LOG_G2_I(CLog::getLogOwner(), TAG, "timed out before getting an event : %Ld %Ld",time_diff, ntimeout);
-            return -1;
-        }
-    }
-
-    return -2;
-}

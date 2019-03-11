@@ -50,10 +50,8 @@ int main(int argc, char *argv[])
             }
             break;
         default:    // general parameter err
-            #if !defined(USE_HID_USB)
             nArgParseResult = -10;
             LOG_G2(CLog::getLogOwner(), "PARSE_ARGS", "PraseErrorInformation: %s", argHandle->GetWholeParam().c_str());
-            #endif
             break;
     }
 
@@ -64,12 +62,7 @@ int main(int argc, char *argv[])
     CDeviceHandler *devHandler = new CDeviceHandler(argHandle);
 
     // Prepare Update. Open & Get Hid Info (VID will be Checked at here)
-
-    #if defined(USE_HID_USB)
-    devHandler->findHidrawNum();
-    #else
     devHandler->openDevice();
-    #endif
 
     if (devHandler->IsDeviceOpened())
     {
