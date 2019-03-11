@@ -309,6 +309,8 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if((nBootUpdate_finish == 1)  && (nCUUpdate_finish == 1) && (nFWUpdate_finish == 1))
     {
+	TxRequestSystem_Reset();
+	usleep(2000000);
         return true;
     }
 
