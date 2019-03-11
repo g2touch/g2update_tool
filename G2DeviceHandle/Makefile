@@ -1,11 +1,12 @@
 ###############################################################################
 # compiler setting
 ###############################################################################
+CHROME_EBUILD_FLAGS = -O2 -pipe -g -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables
 CC       ?= gcc
 CXX      ?= g++
 CPPFLAGS ?=
 CFLAGS   += -g -Wall
-CXXFLAGS += -g -Wall -Weffc++
+CXXFLAGS += -g -std=c++11 -lrt -Wall -Weffc++
 INCPATH  = -I. -I../G2ArgHandle -I../Log
 DEFINES  = $(USER_DEFINE)
 
