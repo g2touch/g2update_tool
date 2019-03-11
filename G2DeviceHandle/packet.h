@@ -12,6 +12,17 @@
 #endif
 #define HID_INPUT_MAX_LEN   (64)
 
+#define ONE_MILLION 1000000
+#define READ_SIZE  64
+#define ONE_PACKET_MAXBODY  52
+#define ONE_PACKET_EXCEPT_BODY  7
+#define ONE_EXCEPT_PACKET 9
+
+#define DUMP_PACKET_EXCEPT_BODY 16
+
+#define NSECTOSEC 1000000000
+#define REPORT_ID_INDEX_SIZE 2
+
 class rxUnit
 {
     public:

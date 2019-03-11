@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <fstream>
 
 #ifndef HIDIOCSFEATURE
 #define HIDIOCSFEATURE(len)    _IOC(_IOC_WRITE|_IOC_READ, 'H', 0x06, len)
@@ -42,12 +43,15 @@ CDeviceHandler::CDeviceHandler(CArgHandler *argHandle) :
 	DeviceIO_hid_over_i2c(argHandle),
         m_bBootUpdateforce(false),
         m_bVerHex(false),
+        log_path(""),
         m_devPath(""),
+        m_devOpenPath(""),
         m_VID(0),
         m_PID(0),
         m_hidrawNode(""),
 	m_bFWVerReceived(false),
-	m_sFwVersion("")
+	m_sFwVersion(""),
+	m_bFinishFWDonload(false)
 {
 	m_devPath = argHandle->GetInterfaceResolved();
 }
@@ -55,6 +59,46 @@ CDeviceHandler::CDeviceHandler(CArgHandler *argHandle) :
 CDeviceHandler::~CDeviceHandler()
 {
 
+}
+
+bool CDeviceHandler::findInterface(string hidrawN)
+{
+    string deviceID;
+
+    /* convert hidraw* to device path */
+    string hidrawStr = "hidraw";
+    string hidrawNum = hidrawN;
+    if (hidrawNum.substr(0, hidrawStr.size()) == hidrawStr) // if startswith "hidraw"
+    {
+    	/* find ls_sys_class_hidraw_hidrawN */
+    	string cmd_ls_sys_class_hidraw_hidrawN = "ls -l /sys/class/hidraw/"; // " ls -l /sys/class/hidraw/hidraw* "
+    	cmd_ls_sys_class_hidraw_hidrawN.append(hidrawNum);
+    	std::string ls_sys_class_hidraw_hidrawN = ShellCommand::exec(cmd_ls_sys_class_hidraw_hidrawN.c_str());
+
+    	/* parse to deviceID */
+    	string keywordStr1 = "-> ../../";
+    	string keywordStr2 = "/hidraw/hidraw";
+    	if (ls_sys_class_hidraw_hidrawN.find(keywordStr1) != string::npos &&
+    		ls_sys_class_hidraw_hidrawN.find(keywordStr2) != string::npos)
+    	{
+    		string tmpDeviceID = ls_sys_class_hidraw_hidrawN;
+    		tmpDeviceID = tmpDeviceID.substr(tmpDeviceID.find(keywordStr1) + keywordStr1.size(), tmpDeviceID.size());
+    		tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find(keywordStr2));
+    		tmpDeviceID = tmpDeviceID.substr(0, tmpDeviceID.find_last_of("/")); // remove device (0000:0000:0000.0000)
+
+    		deviceID = "/sys/";
+    		deviceID.append(tmpDeviceID);
+    	}
+    }
+    else
+    {
+         return false;
+    }
+
+    m_devOpenPath = deviceID;
+    LOG_G2_D(CLog::getLogOwner(), TAG, "set deviceID : \"%s\"", m_devOpenPath.c_str());
+
+    return true;
 }
 
 bool CDeviceHandler::openDevice()
@@ -67,6 +111,78 @@ bool CDeviceHandler::openDevice()
     else if (detectByHidRawName(m_devPath) == false) /* detect "/dev/hidraw*" */
     {
     	LOG_G2_D(CLog::getLogOwner(), TAG, "cannot detect device with Resolved Path : %s", m_devPath.c_str());
+    	return false;
+    }
+
+    // actual open file
+    int fd = DeviceIO_hid_over_i2c::openDevice(m_hidrawNode);
+
+    if (fd < 0)
+    {
+    	LOG_G2_E(CLog::getLogOwner(), TAG, "cannot open device (raw name: %s)", m_hidrawNode.c_str());
+    	return false;
+    }
+
+    return true;
+}
+
+bool CDeviceHandler::findHidrawNum()
+{
+    string deviceID;
+    string tempHidrawNum;
+    string hidrawN = "hidraw";
+    string Num;
+    int i=0;
+    int Max_Hidraw = 0;
+    bool foundDev = false;
+
+    Max_Hidraw = getHidrawCount();
+
+    for(i=0;i< Max_Hidraw;i++)
+    {
+        hidrawN = "hidraw";
+        /* parse to deviceID */
+        Num = to_string(i);
+        hidrawN.append(Num.c_str());
+
+        // open with hidraw num
+        foundDev=reopenDevice(hidrawN);
+        if(foundDev == false) continue;
+        //check debug hidraw
+        if(m_PID != 1)
+        m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+        if(m_sFwVersion != "" || (m_PID == 1))
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Found hidraw%d", i);
+            break;
+        }
+    }
+
+    return true;
+}
+
+int CDeviceHandler::getHidrawCount()
+{
+    /* find hidrawNum */
+    int nHidrawCount = 0;
+    std::string cmd_ls_device_count_hidraw = "ls /sys/class/hidraw/ | wc -l";
+    std::string hidrawCount = ShellCommand::exec(cmd_ls_device_count_hidraw.c_str());
+    nHidrawCount = atoi(hidrawCount.c_str());
+
+    return nHidrawCount;
+}
+
+bool CDeviceHandler::reopenDevice(string hidrawStr)
+{
+    if(findInterface(hidrawStr) == false)
+    {
+    	LOG_G2_D(CLog::getLogOwner(), TAG, "cannot find hid device : %s", hidrawStr.c_str());
+    	return false;
+    }
+
+    if (detectByHidRawName(m_devOpenPath) == false) /* detect "/dev/hidraw*" */
+    {
+    	LOG_G2_D(CLog::getLogOwner(), TAG, "cannot detect device with Resolved Path : %s", m_devOpenPath.c_str());
     	return false;
     }
 
@@ -252,10 +368,13 @@ bool CDeviceHandler::CheckFirmwareVersion(int v_format)
 bool CDeviceHandler::G2Update(unsigned char* file_buf)
 {
     int iRet = 0;
+    int nTry = 0;
     int nBootUpdate_finish = false;
     int nCUUpdate_finish = false;
     int nFWUpdate_finish = false;
 
+    TxRequestHW_Reset(false, 1);
+    ReadDataAll(2000);
     nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce);
 
     if(nBootUpdate_finish <= 0)
@@ -264,21 +383,45 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
         return iRet;
     }
 
-    nCUUpdate_finish = TxRequestCuUpdate(file_buf);
-
-    if(nCUUpdate_finish <= 0)
+    nTry = 0;
+    while(nTry++ < 3)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
-        return iRet;
+        nCUUpdate_finish = TxRequestCuUpdate(file_buf);
+
+        if(nCUUpdate_finish <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
+            #if defined(USE_HID_USB)
+            usleep(1000000);
+            findHidrawNum();
+            nCUUpdate_finish = TxRequestCuUpdate(file_buf);
+            if(nCUUpdate_finish <= 0)
+            #endif
+            return iRet;
+        }
+
+        nFWUpdate_finish = TxRequestFwUpdate(file_buf);
+
+        if(nFWUpdate_finish > 0)
+        {
+            //success
+            break;
+        }
+        else if(nFWUpdate_finish <= 0)
+        {
+            //TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+            LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
+        }
     }
 
-    nFWUpdate_finish = TxRequestFwUpdate(file_buf);
-
-    if(nFWUpdate_finish <= 0)
+#if defined(USE_HID_USB)
+    if(nFWUpdate_finish == 1)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
-        return iRet;
+        findHidrawNum();
+        usleep(1000000);
+        TxRequestSystem_Reset();
     }
+#endif
 
     if(nBootUpdate_finish == 2) //stay in Bootloader When boot updated
     {
@@ -293,7 +436,28 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if(m_sFwVersion == "")
     {
+        #if defined(USE_HID_USB)
+        findHidrawNum();
+        m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+        TxRequestSystem_Reset();
+        if(m_sFwVersion == "")
+        {
+            LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+        }
+        else
+        {
+            if(m_bVerHex)
+            {
+                LOG_G2(CLog::getLogOwner(), TAG, "(HEX)Updated FW Ver : %s",m_sFwVersion.c_str());
+            }
+            else
+            {
+                LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Ver : %s",m_sFwVersion.c_str());
+            }
+        }
+        #else
         LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+        #endif
     }
     else
     {
@@ -309,9 +473,84 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if((nBootUpdate_finish == 1)  && (nCUUpdate_finish == 1) && (nFWUpdate_finish == 1))
     {
+        SaveHistory(true);
         return true;
     }
 
+    SaveHistory(false);
     return false;
+}
+
+/////////////////////////////////////////////////////////////////////////
+// history log
+void CDeviceHandler::SaveHistory(int nFinalResultCode)
+{
+    string datetime = GetDateTimeString();
+    string historyfname = log_path + "/history.txt";
+    fstream fs;
+
+    fs.open(historyfname.c_str(), std::fstream::out | std::fstream::app | std::fstream::ate);
+
+    fs << " " << datetime.substr(0, 2) << "/" << datetime.substr(2, 2) << " "
+       << datetime.substr(5, 2) << ":" << datetime.substr(7, 2) << ":" << datetime.substr(9, 2);
+    fs << "   " << ((nFinalResultCode == true) ? "PASS" : "FAIL") << endl;
+
+    fs.close();
+}
+
+string CDeviceHandler::GetDateTimeString()
+{
+    time_t rawtime;
+    struct tm *timeinfo;
+    char buf[80];
+
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+
+    strftime(buf, 80, "%m%d_%H%M%S", timeinfo);
+
+    return string(buf);
+}
+
+bool CDeviceHandler::CheckAndCreate(string folder)
+{
+    struct stat sb;
+    bool bFound = false;
+    bool isdir = stat(folder.c_str(), &sb) == 0 && S_ISDIR(sb.st_mode);
+    size_t loc = 0;
+    string sub;
+
+    if (folder.length() <= 0) return false;
+    while (isdir == false)
+    {
+        if (loc >= folder.length()) break;
+
+        loc = folder.find("/", loc);
+        if (loc == string::npos)
+        {
+            loc = folder.length();
+        }
+        if (loc == 0)
+        {
+            ++loc;
+            continue;
+        }
+
+        sub = folder.substr(0, loc++);
+        bFound = stat(sub.c_str(), &sb) == 0 && S_ISDIR(sb.st_mode);
+        if (bFound)
+        {
+            continue;
+        }
+        else
+        {
+            mkdir(sub.c_str(), S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+            bFound = stat(sub.c_str(), &sb) == 0 && S_ISDIR(sb.st_mode);
+        }
+        //if (folder.compare(sub) == 0) isdir = bFound;
+        if (loc >= folder.length()) isdir = bFound;
+    }
+
+    return isdir;
 }
 
