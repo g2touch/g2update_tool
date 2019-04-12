@@ -402,7 +402,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
             {
                 buf_pos +=((ret-ONE_PACKET_EXCEPT_BODY)-1);
 
-                if(( buf[ret-1] == TOKEN_ETX1))
+                if( buf[ret-1] == TOKEN_ETX1)
                 {
                     stx_etx_ret = 1;
                 }
@@ -423,7 +423,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
         {
             if(m_packetlength == (buf_pos +1)) //divede to ext1, etx2
             {
-                if(( buf[ret-1] == TOKEN_ETX1))
+                if(buf[ret-1] == TOKEN_ETX1)
                 {
                     buf_pos+=(ret-REPORT_ID_INDEX_SIZE);
                     stx_etx_ret = 1;
@@ -444,7 +444,7 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
 
                     if(nPos_etx == 1)
                     {
-                        if(( buf[2] == TOKEN_ETX2))
+                        if(buf[2] == TOKEN_ETX2)
                         {
                             stx_etx_ret = 1;
                         }
