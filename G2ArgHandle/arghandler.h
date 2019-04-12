@@ -26,6 +26,8 @@ namespace ARG
     	bool HasOptionHelp();
     	bool HasOptionBootForce();
     	bool HasOptionVerHex();
+        short HasOptionCUUpdate();
+        short HasOptionFWUpdate();
 
     private:
     	string m_sWholeParam;
@@ -37,6 +39,8 @@ namespace ARG
     	string m_sLogFile;          // -log
     	bool m_bOptionBootForce;    // -bf
         bool m_bOptionVerHex;       // -vhex
+        short m_cnOptionCUUpdate;     // -cu
+        short m_cnOptionFWUpdate;     // -fw
     };
 
 }

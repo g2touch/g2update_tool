@@ -32,11 +32,11 @@ CLog::CLog(std::string owner) :
     m_errorVisible(true),
     m_G2Visible(true)
 #else
-	m_debugVisible(false),
-	m_infoVisible(false),
-	m_warningVisible(false),
-	m_errorVisible(true),
-	m_G2Visible(true)
+    m_debugVisible(false),
+    m_infoVisible(false),
+    m_warningVisible(false),
+    m_errorVisible(true),
+    m_G2Visible(true)
 #endif
 {
     init();
@@ -52,7 +52,7 @@ CLog::releaseLogFile()
 {
     if( m_logFile != 0 )
     {
-        LOG_G2_D( this, TAG, "release log file : (%d)", m_logFile );
+        LOG_G2_D( getLogOwner(), TAG, "release log file : (%d)", m_logFile );
 
         fclose(m_logFile);
         m_logFile = 0;
@@ -190,13 +190,15 @@ CLog::getCurrentTimeString()
     return std::string(currentTime);
 #else
     char            fmt[64], buf[64];
-    struct timeval  tv;
-    struct tm       *tm;
+    struct timespec tv;
+    struct tm tm_now;
 
-    gettimeofday(&tv, NULL);
-    tm = localtime(&tv.tv_sec);
-    strftime(fmt, sizeof fmt, "%Y-%m-%d %H:%M:%S.%%06u", tm);
-    snprintf(buf, sizeof buf, fmt, tv.tv_usec);
+    clock_gettime(CLOCK_REALTIME ,&tv);
+
+    localtime_r((time_t *)&tv.tv_sec, &tm_now);
+
+    strftime(fmt, sizeof fmt, "%Y-%m-%d %H:%M:%S.%%09u", &tm_now);
+    snprintf(buf, sizeof buf, fmt, tv.tv_nsec);
     return std::string(buf);
 #endif
 }
@@ -260,11 +262,11 @@ CLog::setLogFile(const char* logFile)
 
     if ( !m_logFile )
     {
-        LOG_G2_E( this, TAG, "Set/Open log file fail: \"%s\"", logFile );
+        LOG_G2_E( getLogOwner(), TAG, "Set/Open log file fail: \"%s\"", logFile );
     }
     else
     {
-        LOG_G2_D( this, TAG, "Set/Open log file succeed: \"%s\" (%d)", logFile, m_logFile );
+        LOG_G2_D( getLogOwner(), TAG, "Set/Open log file succeed: \"%s\" (%d)", logFile, m_logFile );
     }
 }
 
@@ -465,7 +467,7 @@ CLog::printG2Log(const char* tag, const char* function, const char* file, const 
     {
         va_list arglist;
         va_start( arglist, message );
-        vfprintf(m_logFile, fmt, arglist); // vfprintf may cause crash : arg_ptr somethings error !
+        vfprintf(m_logFile, fmt, arglist);
         va_end( arglist );
 
         fflush(m_logFile);

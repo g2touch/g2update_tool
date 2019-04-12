@@ -22,7 +22,8 @@ using namespace G2::DeviceIO;
 
 CProcHandler::CProcHandler() :
 	m_fnameLoaded(""),
-	m_bufSize(0)
+	m_bufSize(0),
+	m_cnfirmFile(0)
 {
 	memset(m_bufBinary, 0x00, sizeof(m_bufBinary));
 }
@@ -35,6 +36,8 @@ CProcHandler::~CProcHandler()
 bool CProcHandler::LoadBinary(CArgHandler *devHandler)
 {
     string binfile = devHandler->GetBinFilePath();
+    string keywordCU = ".cu2";
+
     LOG_G2_I(CLog::getLogOwner(), TAG_BINLOADER, "opening file: \"%s\"", binfile.c_str());
     m_fnameLoaded = "";		// reset
 
@@ -55,25 +58,41 @@ bool CProcHandler::LoadBinary(CArgHandler *devHandler)
 
     int nCnt = fread(m_bufBinary, sizeof(unsigned char), m_bufSize, file);
 
-    if (nCnt != m_bufSize)	// did not read whole file
+    if(binfile.find(keywordCU) != string::npos)
     {
-    	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "bytes loaded from %s : %d", binfile.c_str(), nCnt);
-        return 0;
+        m_fnameLoaded = binfile;
+        m_cnfirmFile = UPDATE_CU;
+        LOG_G2_I(CLog::getLogOwner(), TAG_BINLOADER, "Loaded successfully (%s)", m_fnameLoaded.c_str());
     }
-    else if(m_bufSize != _128K)
+    else if(CheckFWBinary(m_bufBinary))
     {
-    	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile size should be 128K(0x20000) but, : 0x%X", m_bufSize);
-        return 0;
-    }
-    else if(!CheckBinary(m_bufBinary))
-    {
-    	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile corrupted : %s", binfile.c_str());
-        return 0;
+        m_fnameLoaded = binfile;
+        m_cnfirmFile = UPDATE_FW;
+        LOG_G2_I(CLog::getLogOwner(), TAG_BINLOADER, "Loaded successfully (%s)", m_fnameLoaded.c_str());
     }
     else
     {
-    	m_fnameLoaded = binfile;
-    	LOG_G2_I(CLog::getLogOwner(), TAG_BINLOADER, "Loaded successfully (%s)", m_fnameLoaded.c_str());
+
+        if (nCnt != m_bufSize)
+        {
+        	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "bytes loaded from %s : %d", binfile.c_str(), nCnt);
+            return 0;
+        }
+        else if(m_bufSize != _128K)
+        {
+        	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile size should be 128K(0x20000) but, : 0x%X", m_bufSize);
+            return 0;
+        }
+        else if(!CheckBinary(m_bufBinary))
+        {
+        	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile corrupted : %s", binfile.c_str());
+            return 0;
+        }
+        else
+        {
+            m_fnameLoaded = binfile;
+            LOG_G2_I(CLog::getLogOwner(), TAG_BINLOADER, "Loaded successfully (%s)", m_fnameLoaded.c_str());
+        }
     }
 
     return nCnt == m_bufSize;
@@ -81,9 +100,32 @@ bool CProcHandler::LoadBinary(CArgHandler *devHandler)
 
 int CProcHandler::DoUpdate(CDeviceHandler *devHandler)
 {
-    LOG_G2_I(CLog::getLogOwner(), TAG, "Start Update FW : %s", m_fnameLoaded.c_str());
+    int nRet = 0;
 
-    int nRet = devHandler->G2Update(m_bufBinary);
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Start Update FW : %s, UpdateSel=%d", m_fnameLoaded.c_str(), devHandler->m_selUpdate);
+
+    switch(devHandler->m_selUpdate)
+    {
+        case UPDATE_ALL:
+        case UPDATE_CUFW:
+            if(m_cnfirmFile == UPDATE_CU || m_cnfirmFile == UPDATE_FW)
+                return -1;
+            nRet = devHandler->G2Update(m_bufBinary);
+            break;
+        case UPDATE_CU:
+            if(m_cnfirmFile != UPDATE_CU)
+                return -1;
+            nRet = devHandler->G2UpdateCU(m_bufBinary);
+            break;
+        case UPDATE_FW:
+            if(m_cnfirmFile != UPDATE_FW)
+                return -1;
+            nRet = devHandler->G2UpdateFW(m_bufBinary, m_bufSize);
+            break;
+        default:
+            nRet = -1;
+            break;
+    }
 
     return nRet;
 }
@@ -95,6 +137,26 @@ bool CProcHandler::ChkFwVer(CDeviceHandler *devHandler)
 	LOG_G2_D(CLog::getLogOwner(), TAG, "Check FW Version Result : %d, %d", nRet, devHandler->m_bVerHex);
 
 	return nRet;
+}
+
+bool CProcHandler::CheckFWBinary(unsigned char* m_bufBinary)
+{
+    int i=0;
+
+    for(i=0; i<13; i+=4)
+    {
+        if((m_bufBinary[0x200+i] == 0x00) && (m_bufBinary[0x200+i+1] == 0x80) && (m_bufBinary[0x200+i+2] == 0x00) && (m_bufBinary[0x200+i+3] == 0x08))
+        {
+
+        }
+        else
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "binfile fw address not match !!!!!!!!");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)

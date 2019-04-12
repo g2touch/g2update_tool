@@ -1,6 +1,7 @@
 ###############################################################################
 # compiler setting
 ###############################################################################
+CHROME_EBUILD_FLAGS = -O2 -pipe -g -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables
 CC       ?= gcc
 CXX      ?= g++
 CPPFLAGS ?=

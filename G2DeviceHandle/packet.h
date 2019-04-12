@@ -3,14 +3,41 @@
 
 #include <string.h>
 
-#if defined(USE_HID_USB)
-#define HID_OUTPUT_MAX_LEN  (64)
-#define HID_OUT_REPORT_ID   (0x80)
-#else
-#define HID_OUTPUT_MAX_LEN  (59)
-#define HID_OUT_REPORT_ID   (0x0A)
-#endif
+#define HID_OUTPUT_MAX_LEN_USB  (64)
+#define HID_OUT_REPORT_ID_USB   (0x80)
+#define HID_OUTPUT_MAX_LEN_I2C  (59)
+#define HID_OUT_REPORT_ID_I2C   (0x0A)
 #define HID_INPUT_MAX_LEN   (64)
+#define ONE_MILLION 1000000
+#define READ_SIZE  64
+#define ONE_PACKET_MAXBODY  52
+#define ONE_PACKET_EXCEPT_BODY  7
+#define ONE_EXCEPT_PACKET 9
+#define DUMP_PACKET_EXCEPT_BODY 16
+#define NSECTOSEC 1000000000
+#define REPORT_ID_INDEX_SIZE 2
+
+#define BUS_PCI			0x01
+#define BUS_ISAPNP		0x02
+#define BUS_USB			0x03
+#define BUS_HIL			0x04
+#define BUS_BLUETOOTH		0x05
+#define BUS_VIRTUAL		0x06
+#define BUS_ISA			0x10
+#define BUS_I8042		0x11
+#define BUS_XTKBD		0x12
+#define BUS_RS232		0x13
+#define BUS_GAMEPORT		0x14
+#define BUS_PARPORT		0x15
+#define BUS_AMIGA		0x16
+#define BUS_ADB			0x17
+#define BUS_I2C			0x18
+#define BUS_HOST		0x19
+#define BUS_GSC			0x1A
+#define BUS_ATARI		0x1B
+#define TYPE_I2C    0
+#define TYPE_USB   1
+#define TYPE_ERR -3
 
 class rxUnit
 {

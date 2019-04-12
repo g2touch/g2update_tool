@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
     CDeviceHandler *devHandler = new CDeviceHandler(argHandle);
 
     // Prepare Update. Open & Get Hid Info (VID will be Checked at here)
-    devHandler->openDevice();
+    devHandler->findHidrawNum();
 
     if (devHandler->IsDeviceOpened())
     {

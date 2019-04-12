@@ -1,13 +1,14 @@
 ###############################################################################
 # compiler setting
 ###############################################################################
+CHROME_EBUILD_FLAGS = -O2 -pipe -g -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables
 CC       ?= gcc
 CXX      ?= g++
 CPPFLAGS ?=
 LDFLAGS  ?=
 CFLAGS   += -g -Wall -pthread
 CXXFLAGS += -g -Wall -pthread -Weffc++
-DEFINES  = -DAPP_VERSION=\"1.2.3096\" $(USER_DEFINE)
+DEFINES  = -DAPP_VERSION=\"1.3.3266\" $(USER_DEFINE)
 INCPATH  = -I. -I../G2ArgHandle -I../G2DeviceHandle -I../G2Procedure -I../Log
 
 ###############################################################################

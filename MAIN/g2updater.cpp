@@ -20,6 +20,9 @@ int handleParsedArgument(CArgHandler *arg);
 
 int main(int argc, char *argv[])
 {
+    string currfolder = string(argv[0], 0, (strrchr(argv[0], '/') - argv[0]));
+    string logfolder = currfolder + "/log";
+
     int nArgParseResult = -1;
     int nUpdateResult = -1;
     USING_EXIT_CODE;
@@ -69,8 +72,12 @@ int main(int argc, char *argv[])
     ///////////////////////////////////////////////////////////////////////////////////////////
     CDeviceHandler *devHandler = new CDeviceHandler(argHandle);
 
-    // Prepare Update. Open & Get Hid Info (VID will be Checked at here)
-    devHandler->openDevice();
+
+    if (devHandler->CheckAndCreate(logfolder) == false)
+        logfolder = currfolder;
+    devHandler->log_path = logfolder;
+
+    devHandler->findHidrawNum();
 
     if (devHandler->IsDeviceOpened() && argHandle->GetBinFilePath().npos > 0)
     {
@@ -80,6 +87,7 @@ int main(int argc, char *argv[])
         {
             devHandler->m_bBootUpdateforce = argHandle->HasOptionBootForce();
             devHandler->m_bVerHex = argHandle->HasOptionVerHex();
+            devHandler->m_selUpdate = (argHandle->HasOptionCUUpdate() | argHandle->HasOptionFWUpdate());
 
             nUpdateResult = ProcHandler->DoUpdate(devHandler);
 

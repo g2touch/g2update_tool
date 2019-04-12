@@ -34,11 +34,17 @@ namespace G2
 
                 bool isDeviceOpened();
                 string TxRequestFwVer(int mSec, int format);
-                int TxRequestHW_Reset();
+                int TxRequestHW_Reset(bool chkack, int trial);
                 int TxRequestSystem_Reset();
                 int TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update);
                 int TxRequestFwUpdate(unsigned char* file_buf);
                 int TxRequestCuUpdate(unsigned char* file_buf);
+                int ReadDataAll(int duration);
+                int hid_Type;
+                unsigned char HID_OUTPUT_MAX_LEN;
+                unsigned char HID_OUT_REPORT_ID;
+                int TxReqOnlyCuUpdate(unsigned char* file_buf);
+                int TxReqOnlyFwUpdate(unsigned char* file_buf, int size);
 
             protected:
                 void initBuffer();
@@ -64,25 +70,38 @@ namespace G2
                 int FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd);
                 int CU_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, int cu_page);
                 int Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd);
-                int Dump(unsigned char* dump_buffer, int address, int size);
-                int FlashDump(int address, int size, int m_nReadBufCnt, unsigned char index);
+                int Dump(unsigned char* out_buf, int address, unsigned int size, int ntime);
+                int FlashDump(int address, int size);
                 int FlashCheckSum_Check(unsigned char* buf, unsigned int fw_checksum);
                 int FlashFinish_Check(unsigned char* read_buf);
                 int Fw_write_size(unsigned char* file_buf);
+                int GetFW_size(unsigned char* file_buf, int size);
                 int Cu_Erase_data(unsigned char* file_buf);
                 int dumpTofile_compare(unsigned char* dump_buf, unsigned char* file_buf, int compare_size);
+                void CUToBin(unsigned char* src, unsigned char* dest);
+                void Pos_init(bool init_idx);
 
             private:
+                int Targetbootversion(unsigned char* dump_buffer);
+                void CheckTargetType(unsigned char* dump_buffer);
+                void CheckBootFileType(unsigned char* file_buf);
+                void CheckFWFileType(unsigned char* file_buf);
+                int CompareTargetToFile();
+
                 int m_fd;
                 unsigned char* out_buffer;
                 unsigned char* in_buffer;
                 unsigned char* rxdbgbuf;
                 rxUnit *tmpRxUnit;
                 unsigned int index;
-                unsigned int packet_length;
+                unsigned int m_packetlength;
                 unsigned int dbgidx_push;
                 unsigned int dbgidx_pop;
                 bool m_bOpened;
+                unsigned int read_pos;
+                unsigned int buf_pos;
+                string target_type;
+                string file_type;
         };
 
     }

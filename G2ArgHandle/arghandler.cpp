@@ -19,6 +19,9 @@ using namespace G2;
 #define KEY_DEF_HELP			"-h"
 #define KEY_DEF_VERHEX          "-vhex"
 #define KEY_DEF_FILE            "-file"
+#define KEY_DEF_CUUPDATE		"-cu"
+#define KEY_DEF_FWUPDATE		"-fw"
+
 
 CArgHandler::CArgHandler() :
     m_sWholeParam(""),
@@ -29,7 +32,9 @@ CArgHandler::CArgHandler() :
     m_bOptionDebug(false),
     m_sLogFile(""),
     m_bOptionBootForce(false),
-	m_bOptionVerHex(false)
+	m_bOptionVerHex(false),
+	m_cnOptionCUUpdate(0),
+	m_cnOptionFWUpdate(0)
 {
 
 }
@@ -71,6 +76,14 @@ int CArgHandler::ParseArg(int argc, char *argv[])
             else if (strcmp(token, KEY_DEF_DEBUG) == 0)
             {
                 m_bOptionDebug = true;
+            }
+            else if (strcmp(token, KEY_DEF_CUUPDATE) == 0)
+            {
+                m_cnOptionCUUpdate = 1;
+            }
+            else if (strcmp(token, KEY_DEF_FWUPDATE) == 0)
+            {
+                m_cnOptionFWUpdate = 2;
             }
             else if (strcmp(token, KEY_DEF_LOG) == 0)
             {
@@ -196,3 +209,12 @@ bool CArgHandler::HasOptionVerHex()
 	return m_bOptionVerHex;
 }
 
+short CArgHandler::HasOptionCUUpdate()
+{
+	return m_cnOptionCUUpdate;
+}
+
+short CArgHandler::HasOptionFWUpdate()
+{
+	return m_cnOptionFWUpdate;
+}

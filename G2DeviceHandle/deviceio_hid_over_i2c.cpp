@@ -79,10 +79,14 @@
 #define TOKEN_ETX2 0xb3
 
 #define FW_START_POS 0x8000
+#define FW_VID_POS 0x220
+#define FW_PID_POS 0x230
+
 #define CU_START_POS 0x4000
 #define BOOT_VER_POS 0x400
 #define BOOT_FILE_SIZE 0x4000
 #define CU_FILE_SIZE 0xb00
+#define BOOT_VERSION_SIZE 0x40
 
 #define DUMP_SIZE 0x100
 
@@ -92,17 +96,17 @@ using namespace G2::DeviceIO;
 #define TAG "deviceio_hid_over_i2c"
 
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
-    m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
-    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0),
-	m_bOpened(false)
+    hid_Type(0),  HID_OUTPUT_MAX_LEN(0), HID_OUT_REPORT_ID(0), m_fd(0),
+    out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
+    index(0), m_packetlength(0), dbgidx_push(0), dbgidx_pop(0),
+    m_bOpened(false), read_pos(0), buf_pos(0), target_type(""),file_type("")
 {
     /* malloc out_buffer, in_buffer */
-    out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
+    out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN_USB];
     in_buffer = new unsigned char[HID_INPUT_MAX_LEN];
     rxdbgbuf = new unsigned char[RXDBGBUFSIZE];
-    initBuffer();
     index =0;
-    packet_length=0;
+    m_packetlength=0;
     tmpRxUnit = new rxUnit();
     dbgidx_push = 0;
     dbgidx_pop = 0;
@@ -346,95 +350,126 @@ end:
 int
 DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand, int Subcommand)
 {
-    int ret = 0;
+    int ret = -2;
     int stx_etx_ret=0;
 
-    if(isUsingIOCTL())
-    {
-        ret = ioctl(m_fd, HIDIOCGFEATURE(size), buf);
-    }
-    else
-    {
-        ret = read(m_fd, buf, size);
+    ret = read(m_fd, buf, size);
 
-        if( ret > 0 )
+    if( ret > 0 )
+    {
+        if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2)  && (buf_pos == 0) )
         {
-            if( (buf[2] == TOKEN_STX1) && (buf[3] == TOKEN_STX2) )
+            m_packetlength = (((unsigned int)(buf[5] << 8) + (unsigned int)buf[6]))& 0xffff;
+
+            if((Maincommand == 0xF1) && (buf[4] == 0x51))
             {
-                packet_length = (((unsigned int)(buf[5] << 8) + (unsigned int)buf[6]))& 0xffff;
-
-                if((Maincommand == 0xF1) && (buf[4] == 0x51) && (Maincommand != 0))
+                if(strstr((char *)&buf[7],"Not Supprot Command(0xF1") != NULL )
                 {
-                    if(strstr((char *)&buf[7],"Not Supprot Command(0xF1") != NULL )
-                    {
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in Bootloader.. ");
-                    }
-                    else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
-                    {
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in USB Bootloader.. ");
-                    }
-                    else
-                    {
-                        LOG_G2_D(CLog::getLogOwner(), TAG, "version get.. strange response %02x %02x ", buf[4], Maincommand);
-                        return 0; //error
-                    }
-
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in Bootloader.. ");
                 }
-                else if((buf[4] != Maincommand) && (Maincommand != 0))
+                else if(strstr((char *)&buf[7],"USB bootloader - Not Supported Command(F1") != NULL )
                 {
-                    LOG_G2_I(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
-                    return 2; //error
-                }
-
-                if((buf[7] != Subcommand) && (Subcommand != 0))
-                {
-                    LOG_G2_I(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
-                    return 2; //error
-                }
-
-                if(( buf[7+packet_length] == TOKEN_ETX1) && (buf[8+packet_length] == TOKEN_ETX2))
-                {
-                    stx_etx_ret = 1;
-                }
-                else if(packet_length > 45)
-                {
-                    stx_etx_ret = 1;
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "Stayed in USB Bootloader.. ");
                 }
                 else
                 {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "end packet different1 : %02x %02x ", buf[7+packet_length] , buf[8+packet_length] );
-                    packet_length=0;
-                    return 0; //errors
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "version get.. strange response %02x %02x ", buf[4], Maincommand);
+                    return -2; //error
                 }
-
             }
-            else if(packet_length > 58)
+
+            else if((buf[4] != Maincommand) && (Maincommand != 0))
             {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
+                return 0; //error
+            }
+
+            if((buf[7] != Subcommand) && (Subcommand != 0))
+            {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
+                return 0;  //error
+            }
+
+            if(m_packetlength <= ONE_PACKET_MAXBODY )
+            {
+                if(( buf[7+m_packetlength] == TOKEN_ETX1) && (buf[8+m_packetlength] == TOKEN_ETX2))
+                {
+                    stx_etx_ret = 1;
+                }
+            }
+            else if((int)m_packetlength == ((ret-ONE_PACKET_EXCEPT_BODY)-1))
+            {
+                buf_pos +=((ret-ONE_PACKET_EXCEPT_BODY)-1);
+
+                if(( buf[ret-1] == TOKEN_ETX1))
+                {
+                    stx_etx_ret = 1;
+                }
+            }
+            else if((int)m_packetlength >= (ret-ONE_PACKET_EXCEPT_BODY))
+            {
+                buf_pos +=(ret-ONE_PACKET_EXCEPT_BODY);
                 stx_etx_ret = 1;
             }
             else
             {
-
-                if(( buf[packet_length] == TOKEN_ETX1) && (buf[packet_length+1] == TOKEN_ETX2))
+                LOG_G2_E(CLog::getLogOwner(), TAG, "end packet different1 : %02x %02x ", buf[7+m_packetlength] , buf[8+m_packetlength] );
+                m_packetlength=0;
+                return -2; //errors
+            }
+        }
+        else if(buf_pos <= m_packetlength)
+        {
+            if(m_packetlength == (buf_pos +1)) //divede to ext1, etx2
+            {
+                if(( buf[ret-1] == TOKEN_ETX1))
                 {
+                    buf_pos+=(ret-REPORT_ID_INDEX_SIZE);
                     stx_etx_ret = 1;
                 }
                 else
                 {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "end packet different2 : %02x %02x ", buf[packet_length] , buf[packet_length] );
                     stx_etx_ret = 0;
                 }
             }
+            else
+            {
+                buf_pos+=(ret-REPORT_ID_INDEX_SIZE);
+                stx_etx_ret = 1;
 
-            if(stx_etx_ret == 0)
-                ret = 0;
-            /* --- */
-        }
-        else if(ret <= 0)
-        {
-            return 0;
+                if(buf_pos > m_packetlength)
+                {
+                    int nPos_etx = ((m_packetlength+ONE_PACKET_EXCEPT_BODY)%(ret-REPORT_ID_INDEX_SIZE));
+
+                    if(nPos_etx == 1)
+                    {
+                        if(( buf[2] == TOKEN_ETX2))
+                        {
+                            stx_etx_ret = 1;
+                        }
+                    }
+                    else if(( buf[nPos_etx] == TOKEN_ETX1) && (buf[nPos_etx+1] == TOKEN_ETX2))
+                    {
+                        stx_etx_ret = 1;
+                    }
+                    else
+                    {
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "nPos_etx : %02x end packet different : %02x %02x ",nPos_etx, buf[nPos_etx] , buf[nPos_etx+1] );
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "buf_pos : %02x m_packetlength : %02x ",buf_pos, m_packetlength);
+                        stx_etx_ret = 0;
+                    }
+                }
+            }
         }
 
+        if(stx_etx_ret == 0)
+            ret = 0;
+        /* --- */
+    }
+    else if(ret <= 0)
+    {
+        LOG_G2_I(CLog::getLogOwner(), TAG, "No Read Data !!");
+        return -2;
     }
 
     return ret;
@@ -476,14 +511,15 @@ int DeviceIO_hid_over_i2c::CreateCmdBuffer(unsigned char cmd, unsigned char* dat
     out_buffer[idx++] = TOKEN_ETX1;
     out_buffer[idx++] = TOKEN_ETX2;
 
-#if defined(USE_HID_USB)
-    if(idx != HID_OUTPUT_MAX_LEN)
+    if(hid_Type == TYPE_USB)
     {
-        for(; idx < (HID_OUTPUT_MAX_LEN);idx++){
-            out_buffer[idx] = 0;
+        if(idx != HID_OUTPUT_MAX_LEN)
+        {
+            for(; idx < (HID_OUTPUT_MAX_LEN);idx++){
+                out_buffer[idx] = 0;
+            }
         }
     }
-#endif
     return idx;
 }
 
@@ -526,17 +562,18 @@ int DeviceIO_hid_over_i2c::waitRxData(int &fd, int uSec)
 // TODO: architecture change
 int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* data, int data_len, int uSecWait)
 {
-	int nReadSize = -1;
-	unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
+    int nReadSize = -1;
+    unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
 
-	waitRxData(m_fd, uSecWait);
-	nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
-
-	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
-	////////////////////////////////////////////////////////////////////////
-	// Inside of readData, ather commands were ignored in this architecture.
-	if (nReadSize > 2)
-	{
+    do{
+        waitRxData(m_fd, uSecWait);
+        nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
+    }while(nReadSize == 0);
+    LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
+    ////////////////////////////////////////////////////////////////////////
+    // Inside of readData, ather commands were ignored in this architecture.
+    if (nReadSize > 2)
+    {
         tmpRxUnit->setBuf(tmp_read, nReadSize);
         tmpRxUnit->setSize(nReadSize);
 	}
@@ -546,12 +583,11 @@ int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* 
         tmpRxUnit->setSize(0);
     }
 
-	delete [] tmp_read;
+    delete [] tmp_read;
 
-	return nReadSize;
+    return nReadSize;
 }
 
-// return uSec
 int DeviceIO_hid_over_i2c::GetCmdWaitAckTime(unsigned char cmd, int mSec)
 {
 	return mSec * 1000;
@@ -565,13 +601,8 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     int size = -1;
     int ret =0;
 
-    while(size != 0 && nTry++ < 10)
-    {
-        waitRxData(m_fd, uSecWait);
-        size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
-        LOG_G2_D(CLog::getLogOwner(), TAG, "size : %d", size);
-    }
-
+    ReadDataAll(1000);
+    Pos_init(false);
     size = CreateCmdBuffer(cmd, data, data_len);	// m_buffer allocated
 
     uSecWait = GetCmdWaitAckTime(cmd, mSecWait);  // 30 msec for Normal command, but some command needs more time
@@ -613,7 +644,6 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     return ret;
 }
 
-// Try 5 times
 string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
 {
     int nRequestResult = TryWriteData(CMD_FW_VER, NULL, 0, CMD_F1_RETRY_MAX, mSec);
@@ -673,7 +703,170 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
     return "";
 }
 
-// Try 5 times
+void DeviceIO_hid_over_i2c::CUToBin(unsigned char* src, unsigned char* dest)
+{
+    int i=0, j=0, k=0;
+
+    for(i=0; j <(0xAFF-1); i=i+4)
+    {
+        switch(j)
+        {
+            case 0:
+                dest[j++]= src[i];
+                dest[j++]= src[i+1];
+                break;
+            case 18:
+                for(k=0;k < 8;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+                i+=28;
+
+                LOG_G2_D( CLog::getLogOwner(), TAG, "18 j = %d", j);
+                break;
+            case 50:
+            case 70:
+                dest[j++]= src[i];
+                dest[j++]= src[i+1];
+                break;
+            case 598:
+                dest[j++]= src[i];
+                i+=4;
+                for(k=0;k < 6;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+                dest[j++]= src[i];
+                i+=4;
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+                dest[j++]= src[i];
+                i+=8;
+
+                LOG_G2_D( CLog::getLogOwner(), TAG, "598 j = %d", j);
+                break;
+            case 679:
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                for(k=0;k < 6;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+
+                for(k=0;k < 5;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+
+                for(k=0;k < 4;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                for(k=0;k < 5;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+
+                for(k=0;k < 6;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                for(k=0;k < 6;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+                i+=4;
+
+                LOG_G2_D( CLog::getLogOwner(), TAG, "679 j = %d", j);
+                break;
+            case 774:
+            case 782:
+            case 840:
+            case 904:
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+                i-=4;
+                break;
+            case 978:
+                i+=4;
+                dest[j++]= src[i];
+                dest[j++]= src[i+1];
+                i+=4;
+
+                for(k=0;k < 3;k++)
+                {
+                    dest[j++]= src[i];
+                    i+=4;
+                }
+                for(k=0;k < 1;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                i-=4;
+                LOG_G2_D( CLog::getLogOwner(), TAG, "980 j = %d", j);
+                break;
+            case 1096:
+                for(k=0;k < 2;k++)
+                {
+                    dest[j++]= src[i];
+                    dest[j++]= src[i+1];
+                    i+=4;
+                }
+
+                i+=4;
+                LOG_G2_D( CLog::getLogOwner(), TAG, "1107 j = %d", j);
+                break;
+
+            default:
+                dest[j++]= src[i];
+                break;
+        }
+    }
+}
+
 int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 {
     unsigned char send_buffer[256]={0,};
@@ -685,7 +878,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     int buf_size = 0;
     int cu_page = 0x320;
     unsigned int base_address = 0x08004000;
-    int nRequestResult = TxRequestHW_Reset();
+    int nRequestResult = TxRequestHW_Reset(true, CMD_F1_RETRY_MAX);
     int retry = 0;
 
     if (nRequestResult <= 0)
@@ -710,13 +903,12 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 
     if (nRequestResult <= 0)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FWDownReady");
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_CUDownReady");
         return nRequestResult;
     }
 
     while(retry < CMD_F1_RETRY_MAX)
     {
-        //CUErase
         buf_size = Cu_Erase_data(buf);
         nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
@@ -733,7 +925,6 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         retry++;
     }
 
-    //CU WRITE
     while(pos < cuend_pos)
     {
         LOG_G2_D( CLog::getLogOwner(), TAG, "CU send_pos : %X, size : %X", pos, cuend_pos);
@@ -750,19 +941,12 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         cu_page++;
     }
 
-    //Dump & compare
-    pos = 0;
-    while(pos < CU_FILE_SIZE)
+    nRequestResult = Dump(dump_buffer, base_address, CU_FILE_SIZE, 5000);
+
+    if(nRequestResult < 0)
     {
-        nRequestResult = Dump(dump_buffer+pos, base_address+pos, DUMP_SIZE);
-
-        if(nRequestResult <= 0)
-        {
-            LOG_G2_E(CLog::getLogOwner(), TAG, "CU Dump error");
-            return nRequestResult;
-        }
-
-        pos+=DUMP_SIZE;
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CU Dump error");
+        return nRequestResult;
     }
 
     nRequestResult = dumpTofile_compare(dump_buffer, file_buf+CU_START_POS, CU_FILE_SIZE);
@@ -778,20 +962,141 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     return nRequestResult;
 }
 
+int DeviceIO_hid_over_i2c::TxReqOnlyCuUpdate(unsigned char* file_buf)
+{
+    unsigned char send_buffer[256]={0,};
+    unsigned char dump_buffer[CU_FILE_SIZE+100]={0,};
+    unsigned char dest_buffer[CU_FILE_SIZE+100]={0,};
+    unsigned short send_length = 0x40;
+    int pos = 0;
+    int cuend_pos = CU_FILE_SIZE;
+    unsigned char buf[64];
+    int buf_size = 0;
+    int cu_page = 0x320;
+    unsigned int base_address = 0x08004000;
+    int nRequestResult = TxRequestHW_Reset(true, CMD_F1_RETRY_MAX);
+    int retry = 0;
 
-// Try 5 times
-int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
+        return nRequestResult;
+    }
+    usleep(150000);
+
+    CUToBin(file_buf, dest_buffer);
+
+    if(Targetbootversion(dump_buffer) < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail !!!");
+        return -1;
+    }
+
+    CheckTargetType(dump_buffer);
+
+    if((target_type.compare("I2C") == 0) && (hid_Type != TYPE_I2C))
+    {
+        hid_Type = TYPE_I2C;
+        HID_OUTPUT_MAX_LEN = HID_OUTPUT_MAX_LEN_I2C;
+        HID_OUT_REPORT_ID = HID_OUT_REPORT_ID_I2C;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "type change: I2C");
+    }
+    else if((target_type.compare("USB") == 0) && (hid_Type != TYPE_USB))
+    {
+        hid_Type = TYPE_USB;
+        HID_OUTPUT_MAX_LEN = HID_OUTPUT_MAX_LEN_USB;
+        HID_OUT_REPORT_ID = HID_OUT_REPORT_ID_USB;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "type change: USB");
+    }
+
+    while(retry < CMD_F1_RETRY_MAX)
+    {
+        buf_size = Cu_Erase_data(buf);
+        nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+        if(nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Cu_Erase_data error");
+            if(retry == CMD_F1_RETRY_MAX-1)
+                return nRequestResult;
+        }
+        else
+        {
+            break;
+        }
+        retry++;
+    }
+
+    while(pos < cuend_pos)
+    {
+        LOG_G2_D( CLog::getLogOwner(), TAG, "CU send_pos : %X, size : %X", pos, cuend_pos);
+        memcpy(send_buffer, dest_buffer+pos, sizeof(send_buffer));
+
+        nRequestResult = CU_Write_CMD(send_buffer, send_length, CMD_CU_WRITE,cu_page);
+
+        if(nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "CU Write error");
+            return nRequestResult;
+        }
+
+        pos+=send_length;
+        cu_page++;
+    }
+
+    nRequestResult = Dump(dump_buffer, base_address, CU_FILE_SIZE, 5000);
+
+    if(nRequestResult < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CU Dump error");
+        return nRequestResult;
+    }
+
+    nRequestResult = dumpTofile_compare(dump_buffer, dest_buffer, CU_FILE_SIZE);
+    if(nRequestResult == 1)
+    {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "CU Write Success");
+    }
+    else
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CU Write Fail");
+    }
+
+    return nRequestResult;
+}
+
+int DeviceIO_hid_over_i2c::TxReqOnlyFwUpdate(unsigned char* file_buf, int size)
 {
     unsigned char buf[64];
     int buf_size = 0;
     int nRequestResult = 0;
-    int pos = FW_START_POS;
-    int fw_size = Fw_write_size(file_buf);
-    int fw_end_pos = (FW_START_POS + fw_size);
+    int pos = 0;
+    int fw_size = GetFW_size(file_buf, size);
+    int fw_end_pos = fw_size;
     int send_length = 0x100;
     unsigned char send_buffer[256]={0,};
     unsigned int fw_checksum = 0;
     unsigned char* read_buf;
+    int padsize=0;
+    int remain=0;
+    int align=0;
+    unsigned char dump_buffer[BOOT_VERSION_SIZE]={0,};
+    int i;
+
+    if(Targetbootversion(dump_buffer) < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail !!!");
+        return -1;
+    }
+
+    CheckTargetType(dump_buffer);
+    CheckFWFileType(file_buf);
+
+    if(CompareTargetToFile() != 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Target and File Type Err !!!");
+        return -1;
+    }
 
     if (fw_size == 0)
     {
@@ -799,7 +1104,20 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
-    //FwDownReady
+    padsize = fw_end_pos - size;
+    remain = 256-padsize;
+    align = size - remain;
+
+    buf_size = GotoBoot_data(buf);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if(nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "GotoBoot_data error");
+        return nRequestResult;
+    }
+    usleep(300000);
+
     buf_size = FWDownReady_data(buf);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
@@ -809,7 +1127,6 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
-    //FLASHERASE
     buf_size = FlashErase_data(buf);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
@@ -819,11 +1136,28 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
-    //FLASHWRITE
     while(pos < fw_end_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "FW send_pos : %X, size : %X", pos, fw_end_pos);
+        LOG_G2_D( CLog::getLogOwner(), TAG, "FW send_pos : %X, size : %X, real:%X", pos, fw_end_pos, size);
+
+        if(pos < align)
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
+        else
+        {
+            for(i=0; i < 256; i++)
+            {
+                if(i < remain)
+                send_buffer[i] = file_buf[pos+i];
+                else
+                send_buffer[i] = 0xFF;
+            }
+        }
+
+        for(i=0; i < 256;i=i+8)
+        {
+            fw_checksum += (send_buffer[i]+send_buffer[i+1]+send_buffer[i+2]+send_buffer[i+3]+send_buffer[i+4]+send_buffer[i+5]+send_buffer[i+6]+send_buffer[i+7]);
+        }
+
         nRequestResult = FW_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
 
         if (nRequestResult <= 0)
@@ -835,11 +1169,8 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         pos+=send_length;
     }
 
-    //checksum calculate
-    for(int i=FW_START_POS; i<fw_end_pos; ++i)
-        fw_checksum += file_buf[i];
+    LOG_G2_E(CLog::getLogOwner(), TAG, "TxReqOnlyFwUpdate fw_size = 0x%x, padsize=%d, remain=%d, align=0x%x", fw_size, padsize, remain, align);
 
-    //FLASHCHECKSUM
     buf_size = FlashCheckSum_data(buf,fw_size,fw_checksum);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
@@ -847,7 +1178,7 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashCheckSum send error");
         return nRequestResult;
-    }        
+    }
 
     read_buf = tmpRxUnit->getBuf();
     nRequestResult = FlashCheckSum_Check(read_buf, fw_checksum);
@@ -858,7 +1189,6 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
-    //FLASHFINISH
     buf_size = FlashFinish_data(buf);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
@@ -882,6 +1212,117 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     }
 
     return nRequestResult;
+}
+
+int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
+{
+    unsigned char buf[64];
+    int buf_size = 0;
+    int nRequestResult = 0;
+    int pos = FW_START_POS;
+    int fw_size = Fw_write_size(file_buf);
+    int fw_end_pos = (FW_START_POS + fw_size);
+    int send_length = 0x100;
+    unsigned char send_buffer[256]={0,};
+    unsigned int fw_checksum = 0;
+    unsigned char* read_buf;
+
+    if (fw_size == 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "fw_write_size ERR");
+        return nRequestResult;
+    }
+
+    buf_size = FWDownReady_data(buf);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FWDownReady Faile");
+        return nRequestResult;
+    }
+
+    buf_size = FlashErase_data(buf);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashErase Fail");
+        return nRequestResult;
+    }
+
+    while(pos < fw_end_pos)
+    {
+        LOG_G2_D( CLog::getLogOwner(), TAG, "FW send_pos : %X, size : %X", pos, fw_end_pos);
+        memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
+        nRequestResult = FW_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
+
+        if (nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "FW Write error");
+            return nRequestResult;
+        }
+
+        pos+=send_length;
+    }
+
+    for(int i=FW_START_POS; i<fw_end_pos; ++i)
+        fw_checksum += file_buf[i];
+
+    buf_size = FlashCheckSum_data(buf,fw_size,fw_checksum);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashCheckSum send error");
+        return nRequestResult;
+    }        
+
+    read_buf = tmpRxUnit->getBuf();
+    nRequestResult = FlashCheckSum_Check(read_buf, fw_checksum);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CheckSum Error");
+        return nRequestResult;
+    }
+
+    buf_size = FlashFinish_data(buf);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashFinish send error");
+        return nRequestResult;
+    }
+
+    read_buf = tmpRxUnit->getBuf();
+    nRequestResult = FlashFinish_Check(read_buf);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashFinish error");
+        return nRequestResult;
+    }
+    else
+    {
+        LOG_G2(CLog::getLogOwner(), TAG, "FW update Success");
+    }
+
+    return nRequestResult;
+}
+
+int DeviceIO_hid_over_i2c::GetFW_size(unsigned char* file_buf, int size)
+{
+    int write_size=size;
+
+    if(write_size%0x100 != 0)
+    {
+        int blank_data = (256-(write_size%256));
+        write_size += blank_data;
+    }
+
+    return write_size;
 }
 
 int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
@@ -911,15 +1352,18 @@ int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
     return write_size;
 }
 
-int DeviceIO_hid_over_i2c::TxRequestHW_Reset()
+int DeviceIO_hid_over_i2c::TxRequestHW_Reset(bool chkack, int trial)
 {
-    int nRequestResult = TryWriteData(CMD_HW_RESET, NULL, 0, CMD_F1_RETRY_MAX, 2000);
+    int nRequestResult = TryWriteData(CMD_HW_RESET, NULL, 0, trial, 2000);
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "nRequestResult : %d", nRequestResult);
 
-    if (nRequestResult <= 0)
+    if(chkack)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset Error");
+        if (nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset Error");
+        }
     }
 
     return nRequestResult;
@@ -931,11 +1375,11 @@ int DeviceIO_hid_over_i2c::TxRequestSystem_Reset()
     int buf_size = 0;
 
     buf_size = system_reset_data(buf);
-    int nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    int nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 3000);
 
     if (nRequestResult <= 0)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset Error");
+        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestSystem_Reset Error");
     }
 
     return nRequestResult;
@@ -944,10 +1388,9 @@ int DeviceIO_hid_over_i2c::TxRequestSystem_Reset()
 
 int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update)
 {
-    LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequestBootUpdate START");
+    LOG_G2_D(CLog::getLogOwner(), TAG, "TxRequestBootUpdate START");
 
     unsigned char buf[64];
-    int bootver_address = 0x08000400;
     int bootstart_address = 0x08000000;
     int buf_size = 0;
     int nRequestResult = 0;
@@ -965,40 +1408,43 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         return 2;
     }
 
-    //boot ver
-    if(bBoot_force_update == false) //boot force update option
+    if(Targetbootversion(dump_buffer) < 0)
     {
-        char curr_boot[9]={0,}, targ_boot[9]={0,};
-        nRequestResult = Dump(dump_buffer, bootver_address, 0x20);
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail !!!");
+        return -1;
+    }
 
-        if(nRequestResult <= 0)
-        {
-            LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail");
-            return nRequestResult; //boot_ver same
-        }
+    nRequestResult = dumpTofile_compare(dump_buffer, file_buf+BOOT_VER_POS, 0x20);
 
-        nRequestResult = dumpTofile_compare(dump_buffer, file_buf+BOOT_VER_POS, 0x20);
+    if(nRequestResult != 1)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Fail to Version Dump compare with file");
+        return nRequestResult;
+    }
 
-        memcpy((char*)curr_boot, (char*)(dump_buffer+8), 8);
-        memcpy((char*)targ_boot, (char*)(file_buf+BOOT_VER_POS+8), 8);
-        //boot_ver check
+    CheckTargetType(dump_buffer);
+    CheckBootFileType(file_buf);
+
+    if(CompareTargetToFile() != 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Target and File Type Err !!!");
+        return -1;
+    }
+
+    if(bBoot_force_update == false)
+    {
         if(nRequestResult == 1)
         {
             LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
-            return nRequestResult; //boot_ver same
+            return nRequestResult;
         }
         else
         {
             LOG_G2(CLog::getLogOwner(), TAG, "Different Bootloader, Bootloader Update Needed");
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
         }
     }
 
-    //HW Reset
-    nRequestResult = TxRequestHW_Reset();
+    nRequestResult = TxRequestHW_Reset(true, CMD_F1_RETRY_MAX);
     if (nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
@@ -1006,7 +1452,6 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     }
     usleep(150000);
 
-    //boot erase
     buf_size = boot_erase_data(buf);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
     if (nRequestResult <= 0)
@@ -1015,7 +1460,6 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         return nRequestResult;
     }
 
-    //Boot WRITE
     while(pos < boot_end_pos)
     {
         LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
@@ -1031,20 +1475,12 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         pos+=send_length;
     }
 
-    //Dump & compare
-    pos = 0;
-    while(pos < BOOT_FILE_SIZE)
+    nRequestResult = Dump(dump_buffer, bootstart_address, BOOT_FILE_SIZE, 5000);
+
+    if(nRequestResult < 0)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
-        nRequestResult = Dump(dump_buffer+pos, bootstart_address+pos, DUMP_SIZE);
-
-        if(nRequestResult <= 0)
-        {
-            LOG_G2_E(CLog::getLogOwner(), TAG, "Boot Dump error");
-            return nRequestResult;
-        }
-
-        pos+=DUMP_SIZE;
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Boot Dump error");
+        return nRequestResult;
     }
 
     nRequestResult = dumpTofile_compare(dump_buffer, file_buf, BOOT_FILE_SIZE);
@@ -1066,10 +1502,10 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 int DeviceIO_hid_over_i2c::boot_erase_data(unsigned char* buf)
 {
     int size = 0;
-    unsigned int eraseSize = 0x4000 ; // 16KB
+    unsigned int eraseSize = 0x4000;
 
     buf[size++] = G2_SUB_0x13_FLASH_ERASE;
-    buf[size++] = G2_SUB_0x13_FLASH_BOOT;  //boot
+    buf[size++] = G2_SUB_0x13_FLASH_BOOT;
     buf[size++]=(eraseSize>>24)&0xFF;
     buf[size++]=(eraseSize>>16)&0xFF;
     buf[size++]=(eraseSize>>8)&0xFF;
@@ -1212,6 +1648,8 @@ int DeviceIO_hid_over_i2c::FlashFinish_data(unsigned char* buf)
 
 int DeviceIO_hid_over_i2c::FlashFinish_Check(unsigned char* read_buf)
 {
+    LOG_G2_D(CLog::getLogOwner(), TAG, "read_buf[7] : %x read_buf[8] %x",read_buf[7],read_buf[8]);
+
     if((read_buf[7] == G2_SUB_0x13_FLASHFINISH) && (read_buf[8] == 0x00) )
     {
         return 1;
@@ -1224,9 +1662,10 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
     unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN_USB];
     unsigned char ret = 1;
-    unsigned long i=0,pos=0,sended_len, send_len, len;
+    unsigned int send_len=0, sended_len=0;
+    unsigned int i=0,pos=0, len=0;
     int retry_ack = 5;
 
     memset(i2c_buf, 0x00, sizeof(i2c_buf));
@@ -1252,8 +1691,21 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
-        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
+        if(len < (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+        {
+             send_len = len;
+        }
+        else
+        {
+            if((len - sended_len) > (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+            {
+                send_len = (HID_OUTPUT_MAX_LEN - 2);
+            }
+            else
+            {
+                send_len = (len - sended_len);
+            }
+        }
 
         i2c_buf[0] = HID_OUT_REPORT_ID;
         i2c_buf[1] = index++;
@@ -1269,9 +1721,9 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 
         ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
 
-        if(ret == -1)
+        if(ret <= 0)
         {
-            LOG_G2_I(CLog::getLogOwner(), TAG, "FW Write error2");
+            LOG_G2_I(CLog::getLogOwner(), TAG, "CU Write error2");
             return ret;
         }
     }
@@ -1279,9 +1731,10 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
     while(retry_ack >= 0)
     {
         retry_ack--;
-        waitRxData(m_fd, uSecWait); //30ms
-
-        ret = readData(buf, HID_INPUT_MAX_LEN, 0xb4, 0 );
+        do{
+            waitRxData(m_fd, uSecWait);
+            ret = readData(buf, HID_INPUT_MAX_LEN, 0xb4, 0 );
+        }while(ret == 0);
 
         if(ret > 2)
         {
@@ -1296,9 +1749,9 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 
 int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
-    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
+    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);
     unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN_USB];
     unsigned char ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1325,8 +1778,21 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
-        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
+        if(len < (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+        {
+             send_len = len;
+        }
+        else
+        {
+            if((len - sended_len) > (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+            {
+                send_len = (HID_OUTPUT_MAX_LEN - 2);
+            }
+            else
+            {
+                send_len = (len - sended_len);
+            }
+        }
 
         i2c_buf[0] = HID_OUT_REPORT_ID;
         i2c_buf[1] = index++;
@@ -1343,7 +1809,7 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
 
         ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
 
-        if(ret == -1)
+        if(ret <= 0)
         {
             LOG_G2_I(CLog::getLogOwner(), TAG, "FW Write error2");
             return ret;
@@ -1353,8 +1819,10 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     while(retry_ack >= 0)
     {
         retry_ack--;
-        waitRxData(m_fd, uSecWait); //30ms
-        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x83 );
+        do{
+            waitRxData(m_fd, uSecWait); //30ms
+            ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x83 );
+        }while(ret ==0);
 
         if(ret > 2)
         {
@@ -1368,7 +1836,7 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
 
 int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
-    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
+    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);
     unsigned char buf[512+9];
     unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     unsigned char ret = 1;
@@ -1398,8 +1866,21 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
     sended_len = 0;
     while(sended_len < len)
     {
-        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
-        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
+        if(len < (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+        {
+             send_len = len;
+        }
+        else
+        {
+            if((len - sended_len) > (unsigned int)(HID_OUTPUT_MAX_LEN - 2))
+            {
+                send_len = (HID_OUTPUT_MAX_LEN - 2);
+            }
+            else
+            {
+                send_len = (len - sended_len);
+            }
+        }
 
         i2c_buf[0] = HID_OUT_REPORT_ID;
         i2c_buf[1] = 0x00;
@@ -1416,7 +1897,7 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
 
         ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
 
-        if(ret == -1)
+        if(ret <= 0)
         {
             LOG_G2_I(CLog::getLogOwner(), TAG, "Boot Write error2");
             return ret;
@@ -1426,8 +1907,10 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
     while(retry_ack >= 0)
     {
         retry_ack--;
-        waitRxData(m_fd, uSecWait); //30ms
-        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
+        do{
+            waitRxData(m_fd, uSecWait); //30ms
+            ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
+        }while(ret == 0);
 
         if(ret > 2)
         {
@@ -1440,111 +1923,110 @@ int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned s
 }
 
 
-int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int size)
+int DeviceIO_hid_over_i2c::Dump(unsigned char* out_buf, int address, unsigned int size, int ntime)
 {
-    LOG_G2_I(CLog::getLogOwner(), TAG, "Dump : Verifying Start " ) ;
-    int uSecWait = GetCmdWaitAckTime(0x13, 1000);  // 30 msec for Normal command, but some command needs more time
-    int read_retry = 5;
-    int m_nReadBufCnt=0;
-    int m_nReadAddr = address;
-    unsigned char *m_pcReadBuf;
-    unsigned char index=0x42;
-    int pos=0;
-    int iRet = 0;
+    int nRet = -1;
+    unsigned int dump_size = 0x100;
+    struct timespec start;
+    struct timespec end;
+    long long time_diff = 0;
+    long long ntimeout = (long long)ntime * ONE_MILLION;
 
-    m_pcReadBuf = new unsigned char[size + 1000];
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Dump START ");
+    Pos_init(false);
+    clock_gettime(CLOCK_MONOTONIC,&start);
 
-    iRet = FlashDump(address, size, m_nReadBufCnt, index) ;
-
-
-    while(pos < size)
+    while(read_pos < size)
     {
-        waitRxData(m_fd, uSecWait); //30ms
-        iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, 0, 0); //dump
-
-        if( read_retry == 0)
+        if(size - read_pos < dump_size)
         {
-            delete m_pcReadBuf;
-            return false ;
+            dump_size = (size - read_pos);
         }
 
-        if(iRet == 0)
+        nRet = FlashDump(address+read_pos, dump_size);
+
+        if( nRet < 0)
         {
-            read_retry--;
-            continue;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Dump Tx cmd fail : %d",nRet);
+            return -1;
         }
 
-        if(pos == 0)
+        do
         {
-            if(m_pcReadBuf[4] !=0x13) continue;
+            do{
+                waitRxData(m_fd, ntime*1000); //30ms
+                nRet = readData(in_buffer, HID_INPUT_MAX_LEN, CMD_MAIN_CMD, G2_SUB_0x13_FLASH_READ);
+            }while(nRet == 0);
 
-            int rx_addr = ((unsigned int)m_pcReadBuf[8] << 24 | (unsigned int)m_pcReadBuf[9] << 16 | (unsigned int)m_pcReadBuf[10] << 8 | (unsigned int)m_pcReadBuf[11]);
-
-            if(m_nReadAddr != rx_addr)
+            if(nRet < 2)
             {
-                delete m_pcReadBuf;
-                return false;
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Ackfail : %d",nRet);
+                Pos_init(false);
+                return -1; //error
             }
-            memcpy(dump_buffer+pos, m_pcReadBuf+16, iRet-16);
 
-            if((int)packet_length >= iRet-15)
+            if(nRet < DUMP_PACKET_EXCEPT_BODY)
             {
-                packet_length-= (iRet-15);
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Dump error : %d",buf_pos);
+                Pos_init(false);
+                return -1; //error
+            }
+
+            if(m_packetlength < (unsigned int)(nRet-ONE_PACKET_EXCEPT_BODY))
+            {
+                memcpy(out_buf+read_pos, in_buffer+DUMP_PACKET_EXCEPT_BODY, (m_packetlength - ONE_EXCEPT_PACKET));
+                read_pos += (m_packetlength - ONE_EXCEPT_PACKET);
+            }
+            else if(buf_pos == (unsigned int)(nRet-ONE_PACKET_EXCEPT_BODY))
+            {
+                memcpy(out_buf+read_pos, in_buffer+DUMP_PACKET_EXCEPT_BODY, (nRet - DUMP_PACKET_EXCEPT_BODY));
+                read_pos += (nRet - DUMP_PACKET_EXCEPT_BODY);
+            }
+            else if(buf_pos < m_packetlength)
+            {
+                memcpy(out_buf+read_pos, in_buffer+REPORT_ID_INDEX_SIZE, nRet -REPORT_ID_INDEX_SIZE );
+                read_pos += (nRet -REPORT_ID_INDEX_SIZE);
             }
             else
             {
-                packet_length =0;
+                memcpy(out_buf+read_pos, in_buffer+REPORT_ID_INDEX_SIZE, (m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) ) );
+                read_pos += (m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) );
+                LOG_G2_I(CLog::getLogOwner(), TAG, "(dump_size - buf_pos) : %x",(m_packetlength - (buf_pos-(nRet-REPORT_ID_INDEX_SIZE)) ));
+                LOG_G2_I(CLog::getLogOwner(), TAG, "read_pos4 : %x, buf_pos: %x",read_pos, buf_pos);
             }
-
-            pos+=(iRet-16);
         }
-        else
-        {
-            memcpy(dump_buffer+pos, m_pcReadBuf+2, iRet-2);
+        while(buf_pos < m_packetlength && buf_pos != 0);
+        buf_pos = 0;
 
-            if((int)packet_length >= iRet)
-            {
-                packet_length-=iRet; //+report id
-            }
-            else
-            {
-                packet_length=0;
-            }
+        clock_gettime(CLOCK_MONOTONIC,&end);
 
-            pos+=(iRet-2);
+        time_diff = (NSECTOSEC*(end.tv_sec-start.tv_sec)) + (end.tv_nsec - start.tv_nsec);
+        if(time_diff > ntimeout) {
+            LOG_G2_I(CLog::getLogOwner(), TAG, "timed out before getting an event : %Ld %Ld",time_diff, ntimeout);
+            Pos_init(false);
+            return -2;
         }
-
-        LOG_G2_I(CLog::getLogOwner(), TAG, "remain packet_length : %x",packet_length);
-
+        LOG_G2_I(CLog::getLogOwner(), TAG, "read_pos : %x, size: %x",read_pos, size);
     }
 
-    delete m_pcReadBuf;
-
-    return true ;
-
+    Pos_init(false);
+    return 0;
 }
 
-int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, unsigned char index)
+int DeviceIO_hid_over_i2c::FlashDump(int address, int size)
 {
     int ret = 0;
     int idx = 0;
+    unsigned char Buf[18] ;
 
-    if( m_nReadBufCnt >= size )
-    {
-        return -1;
-    }
-
-    unsigned char Buf[22] ;
-
-    Buf[idx++] = HID_OUT_REPORT_ID;
+    Buf[idx++] = 0x0A;
     Buf[idx++] = index;
-
     Buf[idx++] =  TOKEN_STX1 ;
     Buf[idx++] =  TOKEN_STX2 ;
-    Buf[idx++] =  (unsigned char)0x13 ;
+    Buf[idx++] =  (unsigned char)CMD_MAIN_CMD ;
     Buf[idx++] =  (unsigned char)0x00 ;
     Buf[idx++] =  (unsigned char)0x09 ;
-    Buf[idx++] =  (unsigned char)0x08 ;
+    Buf[idx++] =  (unsigned char)G2_SUB_0x13_FLASH_READ ;
 
     Buf[idx++]=(address>>24)&0xFF;
     Buf[idx++]=(address>>16)&0xFF;
@@ -1559,9 +2041,175 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
     Buf[idx++] =  (unsigned char)0x03 ;
     Buf[idx++] =  (unsigned char)0xb3 ;
 
-    ret = writeData(Buf , 22) ;
+    ret = write(m_fd, Buf, idx);
 
     return ret;
+}
+
+void DeviceIO_hid_over_i2c::Pos_init(bool init_idx)
+{
+    buf_pos = 0;
+    read_pos = 0;
+    m_packetlength = 0;
+}
+
+int DeviceIO_hid_over_i2c::ReadDataAll(int duration)
+{
+    int nReadSize = -1;
+    struct timespec start;
+    struct timespec end;
+    long long time_diff = 0;
+
+    long long ntimeout = (long long)duration * ONE_MILLION;
+
+    Pos_init(false);
+    clock_gettime(CLOCK_MONOTONIC,&start);
+
+    while(1)
+    {
+        waitRxData(m_fd, 40*1000);
+        nReadSize = read(m_fd, in_buffer, READ_SIZE);
+
+        if(nReadSize > 2)
+        {
+            LOG_G2_I(CLog::getLogOwner(), TAG, "Rx DATA ALL");
+        }
+        else
+        {
+            Pos_init(false);
+            LOG_G2_I(CLog::getLogOwner(), TAG, "Rx DATA ALL");
+            return 0;
+        }
+
+        clock_gettime(CLOCK_MONOTONIC,&end);
+
+        time_diff = (NSECTOSEC*(end.tv_sec-start.tv_sec)) + (end.tv_nsec - start.tv_nsec);
+        if(time_diff > ntimeout)
+        {
+            LOG_G2_I(CLog::getLogOwner(), TAG, "timed out before getting an event : %Ld %Ld",time_diff, ntimeout);
+            return -1;
+        }
+    }
+
+    return -2;
+}
+
+int DeviceIO_hid_over_i2c::Targetbootversion(unsigned char* dump_buffer)
+{
+    int nRequestResult = -1;
+    int bootver_address = 0x08000400;
+
+    nRequestResult = Dump(dump_buffer, bootver_address, 0x20, 5000);
+
+    if(nRequestResult < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail");
+        return nRequestResult; //boot_ver same
+    }
+
+    return nRequestResult;
+}
+
+void DeviceIO_hid_over_i2c::CheckTargetType(unsigned char* dump_buffer)
+{
+    char targ_boot[9]={0,};
+
+    memcpy((char*)targ_boot, (char*)(dump_buffer+8), 8);
+
+    if((targ_boot[0] == '0') && (targ_boot[1] == '0'))
+    {
+        target_type = "USB";
+    }
+    else if((targ_boot[0] == '0') && (targ_boot[1] == '1'))
+    {
+        target_type = "I2C";
+    }
+
+}
+
+void DeviceIO_hid_over_i2c::CheckBootFileType(unsigned char* file_buf)
+{
+    char curr_file[9]={0,};
+
+    memcpy((char*)curr_file, (char*)(file_buf+BOOT_VER_POS+8), 8);
+
+    if((curr_file[0] == '0') && (curr_file[1] == '0'))
+    {
+        file_type = "USB";
+    }
+    else if((curr_file[0] == '0') && (curr_file[1] == '1'))
+    {
+        file_type = "I2C";
+    }
+}
+
+void DeviceIO_hid_over_i2c::CheckFWFileType(unsigned char* file_buf)
+{
+    unsigned char VID[4]={0,};
+    unsigned char PID[4]={0,};
+    unsigned char Temp_Compare[4]={0,};
+
+    memcpy((char*)VID, (char*)(file_buf+FW_VID_POS), 4);
+    memcpy((char*)PID, (char*)(file_buf+FW_PID_POS), 4);
+
+    for (int i = 1; i < 4; i++)
+    {
+        memcpy((char*)Temp_Compare, (char*)(file_buf+FW_VID_POS)+(i*4), 4);
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "VID : %x %x %x %x",VID[0],VID[1],VID[2],VID[3]);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Temp_Compare : %x %x %x %x",Temp_Compare[0],Temp_Compare[1],Temp_Compare[2],Temp_Compare[3]);
+        if (VID[0] != Temp_Compare[0] || VID[1] != Temp_Compare[1] || VID[2] != Temp_Compare[2] || VID[3] != Temp_Compare[3])
+        {
+            file_type = "USB";
+            return;
+        }
+    }
+
+    for (int i = 1; i < 4; i++)
+    {
+        memcpy((char*)Temp_Compare, (char*)(file_buf+FW_PID_POS)+(i*4), 4);
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "PID : %x %x %x %x",PID[0],PID[1],PID[2],PID[3]);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Temp_Compare : %x %x %x %x",Temp_Compare[0],Temp_Compare[1],Temp_Compare[2],Temp_Compare[3]);
+        if (PID[0] != Temp_Compare[0] || PID[1] != Temp_Compare[1] || PID[2] != Temp_Compare[2] || PID[3] != Temp_Compare[3])
+        {
+            file_type = "USB";
+            return;
+        }
+    }
+
+    file_type = "I2C";
+}
+
+
+
+int DeviceIO_hid_over_i2c::CompareTargetToFile()
+{
+    if(( file_type.compare(target_type) != 0) && (target_type.compare("") != 0 ))
+    {
+        LOG_G2(CLog::getLogOwner(), TAG,"Target Boot[%s] and F/W File[%s] are Different Interface.",target_type.c_str(),file_type.c_str());
+        return TYPE_ERR;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "file_type : %s",file_type.c_str());
+    LOG_G2_D(CLog::getLogOwner(), TAG, "hid_Type : %d",hid_Type);
+
+    if((file_type.compare("I2C") == 0) && (hid_Type != TYPE_I2C))
+    {
+        hid_Type = TYPE_I2C;
+        HID_OUTPUT_MAX_LEN = HID_OUTPUT_MAX_LEN_I2C;
+        HID_OUT_REPORT_ID = HID_OUT_REPORT_ID_I2C;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "type change: I2C");
+    }
+    else if((file_type.compare("USB") == 0) && (hid_Type != TYPE_USB))
+    {
+        hid_Type = TYPE_USB;
+        HID_OUTPUT_MAX_LEN = HID_OUTPUT_MAX_LEN_USB;
+        HID_OUT_REPORT_ID = HID_OUT_REPORT_ID_USB;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "type change: USB");
+    }
+
+    return 0;
 
 }
 
