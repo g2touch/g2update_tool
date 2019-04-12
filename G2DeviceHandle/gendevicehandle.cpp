@@ -130,7 +130,6 @@ bool CDeviceHandler::findHidrawNum()
     string deviceID;
     string tempHidrawNum;
     string hidrawN = "hidraw";
-    int Num;
     bool foundDev = false;
 
     vector<string> Max_Hidraw = getHidrawNum();
