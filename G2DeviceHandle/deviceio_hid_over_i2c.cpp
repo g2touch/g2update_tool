@@ -4,6 +4,7 @@
 #include <linux/types.h>
 #include <linux/input.h>
 #include <linux/hidraw.h>
+#include <sys/time.h>
 
 /*
  * Ugly hack to work around failing compilation on systems that don't
