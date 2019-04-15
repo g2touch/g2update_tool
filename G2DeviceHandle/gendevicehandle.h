@@ -60,7 +60,7 @@ namespace G2
                 bool detectByHidRawName(string devName);
                 bool detectByDeviceNode(std::string deviceName);
                 bool getHidInfo(const char* deviceName);
-                void SaveHistory(int nFinalResultCode);
+                /*void SaveHistory(int nFinalResultCode);*/
                 string GetDateTimeString();
                 string m_hidrawNode;
                 bool m_bFWVerReceived;

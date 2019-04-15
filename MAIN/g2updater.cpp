@@ -27,6 +27,7 @@ int main(int argc, char *argv[])
     int nUpdateResult = -1;
     USING_EXIT_CODE;
     CArgHandler* argHandle = 0x0;
+	CLog::SaveHistory("=== start main() ");
 
     ////////////////////////////////////////////////////////////////////
     // Input Argument Handling
@@ -94,6 +95,7 @@ int main(int argc, char *argv[])
             if (nUpdateResult <= 0)
             {
             	EXIT_CODE = EXIT_FAIL;
+				CLog::SaveHistory("=== ProcHandler->DoUpdate(devHandler) ");
             }
             else
             {

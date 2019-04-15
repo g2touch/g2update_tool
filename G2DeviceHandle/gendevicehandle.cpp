@@ -500,11 +500,9 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if((nBootUpdate_finish == 1)  && (nCUUpdate_finish == 1) && (nFWUpdate_finish == 1))
     {
-        SaveHistory(true);
         return true;
     }
 
-    SaveHistory(false);
     return false;
 }
 
@@ -600,6 +598,7 @@ bool CDeviceHandler::G2UpdateCU(unsigned char* file_buf)
     return false;
 }
 
+#if 0
 void CDeviceHandler::SaveHistory(int nFinalResultCode)
 {
     string datetime = GetDateTimeString();
@@ -614,6 +613,7 @@ void CDeviceHandler::SaveHistory(int nFinalResultCode)
 
     fs.close();
 }
+#endif
 
 string CDeviceHandler::GetDateTimeString()
 {

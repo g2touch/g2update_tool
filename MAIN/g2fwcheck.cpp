@@ -26,6 +26,7 @@ int main(int argc, char *argv[])
     USING_EXIT_CODE;
     CArgHandler* argHandle = 0x0;
 
+	CLog::SaveHistory("=== start fwcheck main() ");
     ////////////////////////////////////////////////////////////////////
     // Input Argument Handling
     argHandle = new CArgHandler();
@@ -73,6 +74,7 @@ int main(int argc, char *argv[])
         if (nResult == 0)
         {
             LOG_G2(CLog::getLogOwner(), "PROC_CHKFWVER", "Failed with code: %d", nResult);
+			CLog::SaveHistory(" FWCheck=== Failed with code: ");
             EXIT_CODE = EXIT_FAIL;
         }
         else
