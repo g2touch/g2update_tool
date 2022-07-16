@@ -101,6 +101,7 @@ bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)
 {
     int cu_checksum=0, cu_checksum_cmp = 0;
     int i=0;
+    int cu_end_addr = 0x4b00;
 
     for(i=0; i<13; i+=4)
     {
@@ -138,12 +139,14 @@ bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)
     cu_checksum+= (m_bufBinary[0x57f0 + 5] <<8);
     cu_checksum+= m_bufBinary[0x57f0 + 4];
 
-    for(int i=CU_START_POS; i<0x4b00; i++)
+    if (m_bufBinary[CU_START_POS] == 0x09) cu_end_addr += 192;
+
+    for(int i=CU_START_POS; i < cu_end_addr; i++)
         cu_checksum_cmp += m_bufBinary[i];
 
     if(cu_checksum != cu_checksum_cmp)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "binfile cu checksum error !!!!!!!!");
+        LOG_G2_E(CLog::getLogOwner(), TAG, "binfile cu checksum error !!!!!!!! 0x%x, 0x%x", cu_checksum, cu_checksum_cmp);
         return false;
     }
 

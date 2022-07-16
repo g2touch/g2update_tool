@@ -260,9 +260,15 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if(nBootUpdate_finish <= 0)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
-        return iRet;
-    }
+		m_bBootUpdateforce = true;
+		nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce);
+		if(nBootUpdate_finish <= 0)
+		{
+			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
+			return iRet;
+		}
+	}
+	usleep(500000);
 
     nCUUpdate_finish = TxRequestCuUpdate(file_buf);
 

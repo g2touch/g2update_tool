@@ -4,7 +4,6 @@
 #include <linux/types.h>
 #include <linux/input.h>
 #include <linux/hidraw.h>
-
 /*
  * Ugly hack to work around failing compilation on systems that don't
  * yet populate new version of hidraw.h to userspace.
@@ -83,6 +82,7 @@
 #define BOOT_VER_POS 0x400
 #define BOOT_FILE_SIZE 0x4000
 #define CU_FILE_SIZE 0xb00
+#define CU_PAGE_CNT 0x2c
 
 #define DUMP_SIZE 0x100
 
@@ -93,8 +93,8 @@ using namespace G2::DeviceIO;
 
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
     m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
-    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0),
-	m_bOpened(false)
+    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0), 
+	m_bOpened(false), GetFWStartAddress(0), GetEraseSize(0)
 {
     /* malloc out_buffer, in_buffer */
     out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
@@ -463,7 +463,8 @@ int DeviceIO_hid_over_i2c::CreateCmdBuffer(unsigned char cmd, unsigned char* dat
     out_buffer[idx++] = index++;
 
     out_buffer[idx++] = TOKEN_STX1;
-    out_buffer[idx++] = TOKEN_STX2;
+    out_buffer[idx++] = TOKEN_STX2;
+
     out_buffer[idx++] = cmd;
     out_buffer[idx++] = (data_len >> 8) & 0xff;
     out_buffer[idx++] = data_len & 0xff;
@@ -535,11 +536,22 @@ int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* 
 	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
 	////////////////////////////////////////////////////////////////////////
 	// Inside of readData, ather commands were ignored in this architecture.
-	if (nReadSize > 2)
-	{
-        tmpRxUnit->setBuf(tmp_read, nReadSize);
-        tmpRxUnit->setSize(nReadSize);
-	}
+    if((nReadSize > 2) && ((tmp_read[4] == cmd) || (cmd == CMD_FW_VER)))
+    {
+        bool bRet = Check_Nak(tmp_read);
+        if(bRet == true)
+        {
+            tmpRxUnit->setBuf(tmp_read, nReadSize);
+            tmpRxUnit->setSize(nReadSize);
+        }
+        else
+        {
+            delete [] tmp_read;
+            return -1;
+        }
+        //rxListUnits.push_back(tmpRxUnit);	// will be handled later.
+    }
+
     else
     {
         tmpRxUnit->clearBuf();
@@ -607,7 +619,6 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
             ret = 1;
             break;
         }
-
     }
 
     return ret;
@@ -677,16 +688,19 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
 int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 {
     unsigned char send_buffer[256]={0,};
-    unsigned char dump_buffer[CU_FILE_SIZE+100]={0,};
+    unsigned char dump_buffer[0x1000]={0,};
     unsigned short send_length = 0x40;
     int pos = CU_START_POS;
     int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
     unsigned char buf[64];
     int buf_size = 0;
     int cu_page = 0x320;
-    unsigned int base_address = 0x08004000;
+    int cu_page_count = CU_PAGE_CNT;
+	unsigned int base_address = 0x08004000;
     int nRequestResult = TxRequestHW_Reset();
     int retry = 0;
+
+    GetFWStartAddress = 0x08008000;
 
     if (nRequestResult <= 0)
     {
@@ -705,8 +719,8 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     }
     usleep(300000);
 
-    buf_size = FWDownReady_data(buf);
-    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    buf_size = FWDownReady_data(buf, GetFWStartAddress);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
     {
@@ -717,8 +731,10 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     while(retry < CMD_F1_RETRY_MAX)
     {
         //CUErase
-        buf_size = Cu_Erase_data(buf);
-        nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+        if (file_buf[pos] == 0x09) cu_page_count += 3;
+        buf_size = Cu_Erase_data(buf, cu_page_count);
+        cuend_pos = CU_START_POS + (cu_page_count * send_length);  // update with page count
+        nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
 
         if(nRequestResult <= 0)
         {
@@ -731,6 +747,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
             break;
         }
         retry++;
+        cu_page_count = CU_PAGE_CNT;    // back to CU_PAGE_CNT for next loop
     }
 
     //CU WRITE
@@ -752,8 +769,9 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 
     //Dump & compare
     pos = 0;
-    while(pos < CU_FILE_SIZE)
+    while(pos < (cu_page_count * send_length))
     {
+        LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump send_pos : %X, end_pos : %X", pos, (cu_page_count * send_length));    
         nRequestResult = Dump(dump_buffer+pos, base_address+pos, DUMP_SIZE);
 
         if(nRequestResult <= 0)
@@ -787,11 +805,18 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     int nRequestResult = 0;
     int pos = FW_START_POS;
     int fw_size = Fw_write_size(file_buf);
-    int fw_end_pos = (FW_START_POS + fw_size);
+    int fw_end_pos = (FW_START_POS 
++ fw_size);
     int send_length = 0x100;
     unsigned char send_buffer[256]={0,};
     unsigned int fw_checksum = 0;
     unsigned char* read_buf;
+    unsigned int base_address = 0x08008000; //fw area
+    unsigned int fw_erase_size = 0x00018000;
+    unsigned short addr_idx = 0x8200;	
+
+    GetFWStartAddress = base_address;
+    GetEraseSize = fw_erase_size;	
 
     if (fw_size == 0)
     {
@@ -799,9 +824,16 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
+    nRequestResult = Get_AppStartAddr_fromBinFile(file_buf, addr_idx, &base_address);
+    if(nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "ERROR : FW File hasn't Address!!!");
+        return nRequestResult;
+    }	
+
     //FwDownReady
-    buf_size = FWDownReady_data(buf);
-    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    buf_size = FWDownReady_data(buf, base_address);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
     {
@@ -810,8 +842,8 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     }
 
     //FLASHERASE
-    buf_size = FlashErase_data(buf);
-    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    buf_size = FlashErase_data(buf, GetFWStartAddress, GetEraseSize);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
 
     if (nRequestResult <= 0)
     {
@@ -847,7 +879,8 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashCheckSum send error");
         return nRequestResult;
-    }        
+    }        
+
 
     read_buf = tmpRxUnit->getBuf();
     nRequestResult = FlashCheckSum_Check(read_buf, fw_checksum);
@@ -1018,7 +1051,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     //Boot WRITE
     while(pos < boot_end_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
+        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot dump send_pos : %X, end_pos : %X", pos, boot_end_pos);
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
         nRequestResult = Boot_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
 
@@ -1111,23 +1144,21 @@ int DeviceIO_hid_over_i2c::GotoBoot_data(unsigned char* buf)
     return size;
 }
 
-int DeviceIO_hid_over_i2c::Cu_Erase_data(unsigned char* buf)
+int DeviceIO_hid_over_i2c::Cu_Erase_data(unsigned char* buf, int page_cnt)
 {
     int size = 0;
 
     buf[size++]=0x03;
     buf[size++]=0x20;
-    buf[size++]=0x00;
-    buf[size++]=0x2c;
+    buf[size++] = (page_cnt >> 8) & 0xFF;
+    buf[size++] = page_cnt & 0xFF;
 
     return size;
 }
 
-int DeviceIO_hid_over_i2c::FWDownReady_data(unsigned char* buf)
+int DeviceIO_hid_over_i2c::FWDownReady_data(unsigned char* buf, unsigned int base_address)
 {
     int size = 0;
-    unsigned int base_address = 0x08008000;
-
     buf[size++] = G2_SUB_0x13_FWDOWNREADY;
     buf[size++]=(base_address>>24)&0xFF;
     buf[size++]=(base_address>>16)&0xFF;
@@ -1137,11 +1168,9 @@ int DeviceIO_hid_over_i2c::FWDownReady_data(unsigned char* buf)
     return size;
 }
 
-int DeviceIO_hid_over_i2c::FlashErase_data(unsigned char* buf)
+int DeviceIO_hid_over_i2c::FlashErase_data(unsigned char* buf, unsigned int base_address, unsigned int fw_erase_size)
 {
     int size = 0;
-    unsigned int base_address = 0x08008000;
-    unsigned int fw_erase_size = 0x00018000;
 
     buf[size++] = G2_SUB_0x13_FWERASE;
     buf[size++]=(base_address>>24)&0xFF;
@@ -1563,5 +1592,172 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
 
     return ret;
 
+}
+
+bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
+{
+    int bRet = true;
+    switch(Rx_buf[4])
+    {
+        case CMD_MAIN_CMD:
+            switch(Rx_buf[7])
+            {
+                case G2_SUB_0x13_FLASH_ERASE:
+                    if(Rx_buf[9] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_ERASE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_ERASE: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_FLASH_WRITE:
+                    if(Rx_buf[9] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_WRITE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_WRITE: NAK");
+                        bRet = false;
+                        return bRet;
+
+                    }
+                case G2_SUB_0x13_GOTOBOOT:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
+                        {
+                            GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
+                            GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
+                        }
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_GOTOBOOT: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_GOTOBOOT: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_FWDOWNREADY:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
+                        {
+                            GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
+                            GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
+                        }
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWDOWNREADY: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWDOWNREADY: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                    break;
+                case G2_SUB_0x13_FWERASE:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWERASE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWERASE: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_FWWRITE:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWWRITE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWWRITE: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_FLASHCHKSUM:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASHCHKSUM: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASHCHKSUM: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_FLASHFINISH:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASHFINISH: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASHFINISH: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                 default:
+                     return bRet;
+            }
+        case CMD_CU_ERASE:
+            if(Rx_buf[7] == 0x00)
+            {
+                LOG_G2_I(CLog::getLogOwner(), TAG, "CMD_CU_ERASE: ACK");
+                return bRet;
+            }
+            else
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_ERASE: NAK \n");
+                //LOG_G2_D(CLog::getLogOwner(), TAG, "%X %X %X %X %X %X %X %X",Rx_buf[0],Rx_buf[1],Rx_buf[2],Rx_buf[3],Rx_buf[4],Rx_buf[5],Rx_buf[6],Rx_buf[7]);
+                bRet = false;
+                return bRet;
+            }
+        case CMD_CU_WRITE:
+            if(Rx_buf[7] == 0x00)
+            {
+                LOG_G2_I(CLog::getLogOwner(), TAG, "CMD_CU_Write: ACK");
+                return bRet;
+            }
+            else
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_Write: NAK");
+                bRet = false;
+                return bRet;
+            }
+        default:
+            return bRet;
+    }
+
+    return bRet;
+}
+
+int DeviceIO_hid_over_i2c::Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr)
+{
+    unsigned int fwstraddr = 0x08008000;
+    unsigned int addr = 0;
+    addr = (unsigned int)(file_buf[3 + idx] << 24) + (unsigned int)(file_buf[2 + idx] << 16) + (unsigned int)(file_buf[1 + idx] << 8) + (unsigned int)(file_buf[0 + idx]);
+
+    if(addr != fwstraddr)
+    {
+        return -1;
+    }
+
+    *FW_Startaddr = addr;
+
+    return 1;
 }
 

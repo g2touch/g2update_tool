@@ -52,7 +52,7 @@ CLog::releaseLogFile()
 {
     if( m_logFile != 0 )
     {
-        LOG_G2_D( this, TAG, "release log file : (%d)", m_logFile );
+        LOG_G2_D( getLogOwner(), TAG, "release log file : (%d)", m_logFile );
 
         fclose(m_logFile);
         m_logFile = 0;
@@ -260,11 +260,11 @@ CLog::setLogFile(const char* logFile)
 
     if ( !m_logFile )
     {
-        LOG_G2_E( this, TAG, "Set/Open log file fail: \"%s\"", logFile );
+        LOG_G2_E( getLogOwner(), TAG, "Set/Open log file fail: \"%s\"", logFile );
     }
     else
     {
-        LOG_G2_D( this, TAG, "Set/Open log file succeed: \"%s\" (%d)", logFile, m_logFile );
+        LOG_G2_D( getLogOwner(), TAG, "Set/Open log file succeed: \"%s\" (%d)", logFile, m_logFile );
     }
 }
 

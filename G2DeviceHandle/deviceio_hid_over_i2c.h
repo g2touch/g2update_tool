@@ -56,8 +56,8 @@ namespace G2
                 int TryWriteData(unsigned char cmd, unsigned char* data, int data_len, int trial, int mSecWait);
                 int GotoBoot_data(unsigned char* buf);
                 int boot_erase_data(unsigned char* buf);
-                int FWDownReady_data(unsigned char* buf);
-                int FlashErase_data(unsigned char* buf);
+				int FWDownReady_data(unsigned char* buf, unsigned int base_address);
+				int FlashErase_data(unsigned char* buf, unsigned int base_address, unsigned int fw_erase_size);
                 int FlashCheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum);
                 int FlashFinish_data(unsigned char* buf);
                 int system_reset_data(unsigned char* buf);
@@ -69,8 +69,10 @@ namespace G2
                 int FlashCheckSum_Check(unsigned char* buf, unsigned int fw_checksum);
                 int FlashFinish_Check(unsigned char* read_buf);
                 int Fw_write_size(unsigned char* file_buf);
-                int Cu_Erase_data(unsigned char* file_buf);
+                int Cu_Erase_data(unsigned char* file_buf, int page_cnt);
                 int dumpTofile_compare(unsigned char* dump_buf, unsigned char* file_buf, int compare_size);
+				bool Check_Nak(unsigned char *Rx_buf);
+				int Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr);
 
             private:
                 int m_fd;
@@ -83,6 +85,8 @@ namespace G2
                 unsigned int dbgidx_push;
                 unsigned int dbgidx_pop;
                 bool m_bOpened;
+                unsigned int GetFWStartAddress;
+                unsigned int GetEraseSize;			
         };
 
     }
