@@ -264,12 +264,11 @@ DeviceIO_hid_over_i2c::ReadDataPush( unsigned char * buf, int size)
     return ret;
 }
 
-int
-DeviceIO_hid_over_i2c::ParsePushedData( unsigned char * buf, int size, int Maincommand, int Subcommand, int chk_ack = 0)
+int DeviceIO_hid_over_i2c::ParsePushedData( unsigned char * buf, int size, int Maincommand, int Subcommand, int chk_ack = 0)
 {
     unsigned int i=0, len=0, head=0, tail=0, cnt=0;
     int ret = 0;
-    unsigned char tmpbuf[RXDBGBUFSIZE];
+    unsigned char tmpbuf[RXDBGBUFSIZE]={0,};
 
     head = dbgidx_push;
     tail = dbgidx_pop;
@@ -384,13 +383,13 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
                 }
                 else if((buf[4] != Maincommand) && (Maincommand != 0))
                 {
-                    LOG_G2_I(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
                     return 2; //error
                 }
 
                 if((buf[7] != Subcommand) && (Subcommand != 0))
                 {
-                    LOG_G2_I(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
                     return 2; //error
                 }
 
@@ -615,6 +614,7 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     nTry = 0;
     while (++nTry <= trial)
     {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "cmd : %X data_len : %X", cmd, data_len);    
         nTryResult = TxSingleCmdWaitAck(cmd, data, data_len, uSecWait);
         if (nTryResult > 2)
         {	// ACK received
@@ -694,7 +694,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     unsigned short send_length = 0x40;
     int pos = CU_START_POS;
     int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
-    unsigned char buf[64];
+    unsigned char buf[64] = {0,};
     int buf_size = 0;
     int cu_page = 0x320;
     int cu_page_count = CU_PAGE_CNT;
@@ -722,6 +722,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     usleep(300000);
 
     buf_size = FWDownReady_data(buf, GetFWStartAddress);
+    LOG_G2_D( CLog::getLogOwner(), TAG, "GetFWStartAddress : %X, buf_size : %X", GetFWStartAddress, buf_size);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
@@ -730,12 +731,19 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
+    LOG_G2_D( CLog::getLogOwner(), TAG, "CU pos : %X", pos);
     while(retry < CMD_F1_RETRY_MAX)
     {
         //CUErase
-        if (file_buf[pos] == 0x09) cu_page_count += 3;
+        if (file_buf[pos] == 0x09) 
+        {
+            cu_page_count += 3;
+        }
+
+        LOG_G2_D( CLog::getLogOwner(), TAG, "cu_page_count : %X", cu_page_count);
         buf_size = Cu_Erase_data(buf, cu_page_count);
         cuend_pos = CU_START_POS + (cu_page_count * send_length);  // update with page count
+        LOG_G2_D( CLog::getLogOwner(), TAG, "cuend_pos : %X", cuend_pos);        
         nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
 
         if(nRequestResult <= 0)
@@ -802,7 +810,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 // Try 5 times
 int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
 {
-    unsigned char buf[64];
+    unsigned char buf[64] = {0,};
     int buf_size = 0;
     int nRequestResult = 0;
     int pos = FW_START_POS;
@@ -987,7 +995,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 {
     LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequestBootUpdate START");
 
-    unsigned char buf[64];
+    unsigned char buf[64]={0,};
     int bootver_address = 0x08000400;
     int bootstart_address = 0x08000000;
     int buf_size = 0;
@@ -1260,9 +1268,9 @@ int DeviceIO_hid_over_i2c::FlashFinish_Check(unsigned char* read_buf)
 int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, int cu_page)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
-    unsigned char ret = 1;
+    unsigned char buf[512+9]={0,};
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10]={0,};
+    int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
 
@@ -1334,9 +1342,9 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9];
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
-    unsigned char ret = 1;
+    unsigned char buf[512+9]={0,};
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10]={0,};
+    int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
 
@@ -1406,9 +1414,9 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
 int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9];
+    unsigned char buf[512+9]={0,};
     unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
-    unsigned char ret = 1;
+    int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
 
@@ -1571,7 +1579,7 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
         return -1;
     }
 
-    unsigned char Buf[22] ;
+    unsigned char Buf[22]={0,};
 
     Buf[idx++] = HID_OUT_REPORT_ID;
     Buf[idx++] = index;
