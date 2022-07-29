@@ -943,10 +943,10 @@ int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
         }
     }
 
-    write_size = (file_buf[MAGIC_CODE_128K + 11] <<24);
-    write_size+= (file_buf[MAGIC_CODE_128K + 10] <<16);
-    write_size+= (file_buf[MAGIC_CODE_128K + 9] <<8);
-    write_size+= file_buf[MAGIC_CODE_128K + 8];
+    write_size = ((file_buf[MAGIC_CODE_128K + 11] <<24) & 0xFF000000);
+    write_size+= ((file_buf[MAGIC_CODE_128K + 10] <<16) & 0x00FF0000);
+    write_size+= ((file_buf[MAGIC_CODE_128K + 9] <<8) & 0x0000FF00);
+    write_size+= (file_buf[MAGIC_CODE_128K + 8]) & 0x000000FF;
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "real F/W write size in File %X", write_size);
 
