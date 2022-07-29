@@ -719,7 +719,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         LOG_G2_E(CLog::getLogOwner(), TAG, "GotoBoot_data error");
         return nRequestResult;
     }
-    usleep(300000);
+    usleep(500000);
 
     buf_size = FWDownReady_data(buf, GetFWStartAddress);
     LOG_G2_D( CLog::getLogOwner(), TAG, "GetFWStartAddress : %X, buf_size : %X", GetFWStartAddress, buf_size);
@@ -1007,22 +1007,6 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     int send_length = 0x100;
     string fw_ver = "";
 
-    //HW Reset
-    nRequestResult = TxRequestHW_Reset();
-    if (nRequestResult <= 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
-        return nRequestResult;
-    }
-    usleep(150000);    
-
-    fw_ver = TxRequestFwVer(1000);
-    if(strstr(fw_ver.c_str(), "00.00.0000") != NULL)
-    {
-        //LOG_G2_E(CLog::getLogOwner(), TAG, "Can't update bootloader.. Try it again After flashing !!!");
-        return 2;
-    }
-
     //boot ver
     if(bBoot_force_update == false) //boot force update option
     {
@@ -1054,6 +1038,22 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
         }
     }
+
+    //HW Reset
+    nRequestResult = TxRequestHW_Reset();
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
+        return nRequestResult;
+    }
+    usleep(150000);    
+
+    fw_ver = TxRequestFwVer(1000);
+    if(strstr(fw_ver.c_str(), "00.00.0000") != NULL)
+    {
+        //LOG_G2_E(CLog::getLogOwner(), TAG, "Can't update bootloader.. Try it again After flashing !!!");
+        return 2;
+    }    
 
     //boot erase
     buf_size = boot_erase_data(buf);

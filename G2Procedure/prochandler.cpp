@@ -18,18 +18,21 @@ using namespace G2::DeviceIO;
 #define TAG_BINLOADER "proc_binloader"
 #define TAG "prochandler"
 
+#define FILE_BUFFER_SIZE 0x20100
 #define CU_START_POS 0x4000
 
-CProcHandler::CProcHandler() :
+CProcHandler::CProcHandler() :    
 	m_fnameLoaded(""),
-	m_bufSize(0)
+	m_bufSize(0),
+    m_bufBinary(0)	
 {
-	memset(m_bufBinary, 0x00, sizeof(m_bufBinary));
+    m_bufBinary = new unsigned char[FILE_BUFFER_SIZE];
+	memset(m_bufBinary, 0x00, FILE_BUFFER_SIZE);    
 }
 
 CProcHandler::~CProcHandler()
 {
-
+    delete [] m_bufBinary;
 }
 
 bool CProcHandler::LoadBinary(CArgHandler *devHandler)
