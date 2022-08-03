@@ -86,8 +86,6 @@
 
 #define DUMP_SIZE 0x100
 
-#define MAGIC_CODE_128K 0x1fff0
-
 using namespace G2;
 using namespace G2::DeviceIO;
 
@@ -264,11 +262,12 @@ DeviceIO_hid_over_i2c::ReadDataPush( unsigned char * buf, int size)
     return ret;
 }
 
-int DeviceIO_hid_over_i2c::ParsePushedData( unsigned char * buf, int size, int Maincommand, int Subcommand, int chk_ack = 0)
+int
+DeviceIO_hid_over_i2c::ParsePushedData( unsigned char * buf, int size, int Maincommand, int Subcommand, int chk_ack = 0)
 {
     unsigned int i=0, len=0, head=0, tail=0, cnt=0;
     int ret = 0;
-    unsigned char tmpbuf[RXDBGBUFSIZE]={0,};
+    unsigned char tmpbuf[RXDBGBUFSIZE];
 
     head = dbgidx_push;
     tail = dbgidx_pop;
@@ -383,13 +382,13 @@ DeviceIO_hid_over_i2c::readData( unsigned char * buf, int size, int Maincommand,
                 }
                 else if((buf[4] != Maincommand) && (Maincommand != 0))
                 {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
+                    LOG_G2_I(CLog::getLogOwner(), TAG, "MainCommend different : %02x %02x ", buf[4], Maincommand);
                     return 2; //error
                 }
 
                 if((buf[7] != Subcommand) && (Subcommand != 0))
                 {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
+                    LOG_G2_I(CLog::getLogOwner(), TAG, "SubCommand different : %02x %02x ", buf[7], Subcommand);
                     return 2; //error
                 }
 
@@ -537,7 +536,7 @@ int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* 
 	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
 	////////////////////////////////////////////////////////////////////////
 	// Inside of readData, ather commands were ignored in this architecture.
-    if((nReadSize > 2) && (tmp_read[4] == cmd))
+    if((nReadSize > 2) && ((tmp_read[4] == cmd) || (cmd == CMD_FW_VER)))
     {
         bool bRet = Check_Nak(tmp_read);
         if(bRet == true)
@@ -614,7 +613,6 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     nTry = 0;
     while (++nTry <= trial)
     {
-        LOG_G2_D(CLog::getLogOwner(), TAG, "cmd : %X data_len : %X", cmd, data_len);    
         nTryResult = TxSingleCmdWaitAck(cmd, data, data_len, uSecWait);
         if (nTryResult > 2)
         {	// ACK received
@@ -694,7 +692,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     unsigned short send_length = 0x40;
     int pos = CU_START_POS;
     int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
-    unsigned char buf[64] = {0,};
+    unsigned char buf[64];
     int buf_size = 0;
     int cu_page = 0x320;
     int cu_page_count = CU_PAGE_CNT;
@@ -719,10 +717,9 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         LOG_G2_E(CLog::getLogOwner(), TAG, "GotoBoot_data error");
         return nRequestResult;
     }
-    usleep(500000);
+    usleep(300000);
 
     buf_size = FWDownReady_data(buf, GetFWStartAddress);
-    LOG_G2_D( CLog::getLogOwner(), TAG, "GetFWStartAddress : %X, buf_size : %X", GetFWStartAddress, buf_size);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
@@ -731,19 +728,12 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
-    LOG_G2_D( CLog::getLogOwner(), TAG, "CU pos : %X", pos);
     while(retry < CMD_F1_RETRY_MAX)
     {
         //CUErase
-        if (file_buf[pos] == 0x09) 
-        {
-            cu_page_count += 3;
-        }
-
-        LOG_G2_D( CLog::getLogOwner(), TAG, "cu_page_count : %X", cu_page_count);
+        if (file_buf[pos] == 0x09) cu_page_count += 3;
         buf_size = Cu_Erase_data(buf, cu_page_count);
         cuend_pos = CU_START_POS + (cu_page_count * send_length);  // update with page count
-        LOG_G2_D( CLog::getLogOwner(), TAG, "cuend_pos : %X", cuend_pos);        
         nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
 
         if(nRequestResult <= 0)
@@ -810,25 +800,23 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 // Try 5 times
 int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
 {
-    unsigned char buf[64] = {0,};
+    unsigned char buf[64];
     int buf_size = 0;
     int nRequestResult = 0;
     int pos = FW_START_POS;
     int fw_size = Fw_write_size(file_buf);
-    int fw_end_pos = (FW_START_POS + fw_size);
+    int fw_end_pos = (FW_START_POS 
++ fw_size);
     int send_length = 0x100;
     unsigned char send_buffer[256]={0,};
     unsigned int fw_checksum = 0;
     unsigned char* read_buf;
     unsigned int base_address = 0x08008000; //fw area
     unsigned int fw_erase_size = 0x00018000;
-    unsigned short addr_idx = 0x8200;    
+    unsigned short addr_idx = 0x8200;	
 
     GetFWStartAddress = base_address;
     GetEraseSize = fw_erase_size;	
-
-    LOG_G2_D(CLog::getLogOwner(), TAG, "GetFWStartAddress size %X", GetFWStartAddress);
-    LOG_G2_D(CLog::getLogOwner(), TAG, "GetEraseSize %X", GetEraseSize);
 
     if (fw_size == 0)
     {
@@ -936,22 +924,19 @@ int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
 
     for(i=0; i<4; i++)
     {
-        if(file_buf[MAGIC_CODE_128K+i] != 0xa5)
+        if(file_buf[0x1fff0+i] != 0xa5)
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Error No Magic Code ");
             return write_size;
         }
     }
 
-    write_size = ((file_buf[MAGIC_CODE_128K + 10] <<16) & 0x00FF0000);
-    write_size+= ((file_buf[MAGIC_CODE_128K + 9] <<8) & 0x0000FF00);
-    write_size+= (file_buf[MAGIC_CODE_128K + 8]) & 0x000000FF;
-
-    LOG_G2_D(CLog::getLogOwner(), TAG, "real F/W write size in File %X", write_size);
+    write_size = (file_buf[0x1fff0 + 11] <<24);
+    write_size+= (file_buf[0x1fff0 + 10] <<16);
+    write_size+= (file_buf[0x1fff0 + 9] <<8);
+    write_size+= file_buf[0x1fff0 + 8];
 
     if(write_size%0x100 != 0)
     {
-
         int blank_data = (256-(write_size%256));
         write_size += blank_data;
     }
@@ -994,7 +979,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 {
     LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequestBootUpdate START");
 
-    unsigned char buf[64]={0,};
+    unsigned char buf[64];
     int bootver_address = 0x08000400;
     int bootstart_address = 0x08000000;
     int buf_size = 0;
@@ -1005,6 +990,13 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     int boot_end_pos = BOOT_FILE_SIZE;
     int send_length = 0x100;
     string fw_ver = "";
+
+    fw_ver = TxRequestFwVer(1000);
+    if(strstr(fw_ver.c_str(), "00.00.0000") != NULL)
+    {
+        //LOG_G2_E(CLog::getLogOwner(), TAG, "Can't update bootloader.. Try it again After flashing !!!");
+        return 2;
+    }
 
     //boot ver
     if(bBoot_force_update == false) //boot force update option
@@ -1045,14 +1037,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
         return nRequestResult;
     }
-    usleep(150000);    
-
-    fw_ver = TxRequestFwVer(1000);
-    if(strstr(fw_ver.c_str(), "00.00.0000") != NULL)
-    {
-        //LOG_G2_E(CLog::getLogOwner(), TAG, "Can't update bootloader.. Try it again After flashing !!!");
-        return 2;
-    }    
+    usleep(150000);
 
     //boot erase
     buf_size = boot_erase_data(buf);
@@ -1066,7 +1051,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     //Boot WRITE
     while(pos < boot_end_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
+        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot dump send_pos : %X, end_pos : %X", pos, boot_end_pos);
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
         nRequestResult = Boot_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
 
@@ -1232,12 +1217,12 @@ int DeviceIO_hid_over_i2c::FlashCheckSum_Check(unsigned char* buf, unsigned int 
         if((buf[9] == ((fw_checksum>>24)&0xFF)) &&  (buf[10] == ((fw_checksum>>16)&0xFF)) &&\
             (buf[11] == ((fw_checksum>>8)&0xFF) ) &&  (buf[12] == ((fw_checksum)&0xFF))  )
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "CHECKSUM  OK");
+            LOG_G2_I(CLog::getLogOwner(), TAG, "CHECKSUM  OK");
             ret = 1;
         }
         else
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "CHECKSUM  ERROR");
+            LOG_G2_I(CLog::getLogOwner(), TAG, "CHECKSUM  ERROR");
         }
     }
 
@@ -1267,8 +1252,8 @@ int DeviceIO_hid_over_i2c::FlashFinish_Check(unsigned char* read_buf)
 int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, int cu_page)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9]={0,};
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10]={0,};
+    unsigned char buf[512+9];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1341,8 +1326,8 @@ int DeviceIO_hid_over_i2c::CU_Write_CMD(unsigned char* send_buffer, unsigned sho
 int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9]={0,};
-    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10]={0,};
+    unsigned char buf[512+9];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
     int retry_ack = 5;
@@ -1413,7 +1398,7 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
 int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
-    unsigned char buf[512+9]={0,};
+    unsigned char buf[512+9];
     unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
     int ret = 1;
     unsigned long i=0,pos=0,sended_len, send_len, len;
@@ -1578,7 +1563,7 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
         return -1;
     }
 
-    unsigned char Buf[22]={0,};
+    unsigned char Buf[22] ;
 
     Buf[idx++] = HID_OUT_REPORT_ID;
     Buf[idx++] = index;
@@ -1612,7 +1597,6 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
 bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
 {
     int bRet = true;
-    int Length = ((Rx_buf[5] << 8) + (Rx_buf[6]));
     switch(Rx_buf[4])
     {
         case CMD_MAIN_CMD:
@@ -1626,14 +1610,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     }
                     else
                     {
-                        if ((Length > 3) && (Rx_buf[10] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed.");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_ERASE: NAK");
-                        }
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_ERASE: NAK");
                         bRet = false;
                         return bRet;
                     }
@@ -1645,14 +1622,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     }
                     else
                     {
-                        if ((Length > 3) && (Rx_buf[10] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed..");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_WRITE: NAK");
-                        }                    
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FLASH_WRITE: NAK");
                         bRet = false;
                         return bRet;
 
@@ -1660,7 +1630,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                 case G2_SUB_0x13_GOTOBOOT:
                     if(Rx_buf[8] == 0x00)
                     {
-                        if (Length > 6)
+                        if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
                         {
                             GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
                             GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
@@ -1670,21 +1640,14 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     }
                     else
                     {
-                        if ((Length > 10) && (Rx_buf[17] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed...");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_GOTOBOOT: NAK");
-                        }
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_GOTOBOOT: NAK");
                         bRet = false;
                         return bRet;
                     }
                 case G2_SUB_0x13_FWDOWNREADY:
                     if(Rx_buf[8] == 0x00)
                     {
-                        if (Length > 6)
+                        if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
                         {
                             GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
                             GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
@@ -1693,17 +1656,8 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                         return bRet;
                     }
                     else
-                    {                    
-                        if ((Length > 10) && (Rx_buf[17] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed..0.");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWDOWNREADY: NAK");
-
-                        }                       
-
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWDOWNREADY: NAK");
                         bRet = false;
                         return bRet;
                     }
@@ -1716,15 +1670,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     }
                     else
                     {
-                        if ((Length > 2) && (Rx_buf[9] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed....");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWERASE: NAK");
-                        }                    
-
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWERASE: NAK");
                         bRet = false;
                         return bRet;
                     }
@@ -1736,15 +1682,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     }
                     else
                     {
-                        if ((Length > 2) && (Rx_buf[9] == 0x01))
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed.....");
-                        }
-                        else
-                        {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWWRITE: NAK");
-
-                        }
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWWRITE: NAK");
                         bRet = false;
                         return bRet;
                     }
@@ -1783,15 +1721,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
             }
             else
             {
-                if ((Length > 1) && (Rx_buf[8] == 0x01))
-                {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed......");
-                }
-                else
-                {            
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_ERASE: NAK \n");
-                }            
-
+                LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_ERASE: NAK \n");
                 //LOG_G2_D(CLog::getLogOwner(), TAG, "%X %X %X %X %X %X %X %X",Rx_buf[0],Rx_buf[1],Rx_buf[2],Rx_buf[3],Rx_buf[4],Rx_buf[5],Rx_buf[6],Rx_buf[7]);
                 bRet = false;
                 return bRet;
@@ -1804,14 +1734,7 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
             }
             else
             {
-                if ((Length > 1) && (Rx_buf[8] == 0x01))
-                {
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "FW Security Failed.......");
-                }
-                else
-                {            
-                    LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_Write: NAK");
-                }
+                LOG_G2_D(CLog::getLogOwner(), TAG, "CMD_CU_Write: NAK");
                 bRet = false;
                 return bRet;
             }

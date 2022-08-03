@@ -23,15 +23,10 @@ namespace G2
                 bool ChkFwVer(CDeviceHandler *devHandler);
                 bool CheckBinary(unsigned char* m_bufBinary);
 
-
             private:
-                CProcHandler(const G2::PROC::CProcHandler&); // copy constructor
-                CProcHandler & operator = (const G2::PROC::CProcHandler&); // override
-                
                 string m_fnameLoaded;
                 int m_bufSize;
-            public:
-                unsigned char *m_bufBinary;                
+                unsigned char m_bufBinary[0x20000+100];
         };
     }
 }
