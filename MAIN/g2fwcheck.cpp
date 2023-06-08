@@ -15,6 +15,7 @@ using namespace G2::DeviceIO;
 using namespace PROC;
 
 #define KEY_DEF_INTERFACE		"-n"
+#define TAG "g2fwcheck"
 
 // prototype
 int handleParsedArgument(CArgHandler *arg);
@@ -77,6 +78,12 @@ int main(int argc, char *argv[])
         }
         else
         {
+            if (argHandle->HasOptionShowVidPid())
+            {
+                unsigned short pid = devHandler->getPID();
+                LOG_G2(CLog::getLogOwner(), TAG, "VID : 0x2A94");
+                LOG_G2(CLog::getLogOwner(), TAG, "PID : 0x%04X",  pid);
+            }
             EXIT_CODE = EXIT_PASS;
         }
 

@@ -19,6 +19,7 @@ using namespace G2;
 #define KEY_DEF_HELP			"-h"
 #define KEY_DEF_VERHEX          "-vhex"
 #define KEY_DEF_FILE            "-file"
+#define KEY_DEF_SHOWVIDPID      "-vidpid"
 
 CArgHandler::CArgHandler() :
     m_sWholeParam(""),
@@ -29,7 +30,8 @@ CArgHandler::CArgHandler() :
     m_bOptionDebug(false),
     m_sLogFile(""),
     m_bOptionBootForce(false),
-	m_bOptionVerHex(false)
+	m_bOptionVerHex(false),
+	m_bShowVidPid(false)
 {
 
 }
@@ -88,6 +90,10 @@ int CArgHandler::ParseArg(int argc, char *argv[])
             {
                 m_bOptionVerHex = true;
             }
+            else if (strcmp(token, KEY_DEF_SHOWVIDPID) == 0)
+            {
+                m_bShowVidPid = true;
+            }            
             else
             {
                 nRet = -3;  // unknown param
@@ -194,5 +200,10 @@ bool CArgHandler::HasOptionBootForce()
 bool CArgHandler::HasOptionVerHex()
 {
 	return m_bOptionVerHex;
+}
+
+bool CArgHandler::HasOptionShowVidPid()
+{
+    return m_bShowVidPid;
 }
 

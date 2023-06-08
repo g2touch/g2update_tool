@@ -33,6 +33,7 @@ namespace G2
                 bool IsDeviceOpened();
                 bool CheckFirmwareVersion(int v_format);
                 bool G2Update(unsigned char* file_buf);
+                unsigned short getPID();
 
                 bool m_bBootUpdateforce;
                 bool m_bVerHex;

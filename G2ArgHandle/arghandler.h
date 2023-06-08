@@ -26,6 +26,7 @@ namespace ARG
     	bool HasOptionHelp();
     	bool HasOptionBootForce();
     	bool HasOptionVerHex();
+        bool HasOptionShowVidPid();
 
     private:
     	string m_sWholeParam;
@@ -37,6 +38,7 @@ namespace ARG
     	string m_sLogFile;          // -log
     	bool m_bOptionBootForce;    // -bf
         bool m_bOptionVerHex;       // -vhex
+        bool m_bShowVidPid;         // -vidpid
     };
 
 }

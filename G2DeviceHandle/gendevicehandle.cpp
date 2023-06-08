@@ -321,3 +321,8 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
     return false;
 }
 
+unsigned short CDeviceHandler::getPID()
+{
+    return m_PID;
+}
+
