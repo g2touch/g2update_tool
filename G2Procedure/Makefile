@@ -3,7 +3,7 @@
 ###############################################################################
 CC       ?= gcc
 CXX      ?= g++
-CPPFLAGS ?=
+CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE
 CFLAGS   += -g -Wall
 CXXFLAGS += -g -Wall -Weffc++
 INCPATH  = -I. -I../Log -I../G2ArgHandle -I../G2DeviceHandle

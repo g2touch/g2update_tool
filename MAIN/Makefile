@@ -3,7 +3,7 @@
 ###############################################################################
 CC       ?= gcc
 CXX      ?= g++
-CPPFLAGS ?=
+CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE
 LDFLAGS  ?=
 CFLAGS   += -g -Wall -pthread
 CXXFLAGS += -g -Wall -pthread -Weffc++
