@@ -18,6 +18,7 @@ using namespace G2::DeviceIO;
 #define TAG_BINLOADER "proc_binloader"
 #define TAG "prochandler"
 
+#define CU2_VIRGIN_CODE_POS 0x57f0
 #define CU_START_POS 0x4000
 
 CProcHandler::CProcHandler() :
@@ -100,6 +101,7 @@ bool CProcHandler::ChkFwVer(CDeviceHandler *devHandler)
 bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)
 {
     int cu_checksum=0, cu_checksum_cmp = 0;
+    int cu_virgin_addr = CU2_VIRGIN_CODE_POS; //STM
     int i=0;
     int cu_end_addr = 0x4b00;
 
@@ -125,22 +127,32 @@ bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)
         }
     }
 
-    for(i=0; i<8; i++)
+
+    //cu magic code check
+    for(i=0; i<4; i++)
     {
-        if(m_bufBinary[0x57f0+i] == 0xff)
+        if(m_bufBinary[CU2_VIRGIN_CODE_POS+i] == 0xff)
         {
-            LOG_G2_E(CLog::getLogOwner(), TAG, "binfile cu magic error !!!!!!!!");
-            return false;
+            cu_virgin_addr = CU2_VIRGIN_CODE_POS + 0x800;
+            if(m_bufBinary[CU2_VIRGIN_CODE_POS + i + 0x800] == 0xff)
+            {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot Fine CU Virgin code !!!!!!!!");
+                return false;
+            }
         }
     }
 
-    cu_checksum = (m_bufBinary[0x57f0 + 7] <<24);
-    cu_checksum+= (m_bufBinary[0x57f0 + 6] <<16);
-    cu_checksum+= (m_bufBinary[0x57f0 + 5] <<8);
-    cu_checksum+= m_bufBinary[0x57f0 + 4];
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Cannot Fine CU Virgin addr: 0x%x",cu_virgin_addr);
+
+    //cu checksum check
+    cu_checksum = (m_bufBinary[cu_virgin_addr + 7] <<24);
+    cu_checksum+= (m_bufBinary[cu_virgin_addr + 6] <<16);
+    cu_checksum+= (m_bufBinary[cu_virgin_addr + 5] <<8);
+    cu_checksum+= m_bufBinary[cu_virgin_addr + 4];
+
 
     if (m_bufBinary[CU_START_POS] == 0x09) cu_end_addr += 192;
-
+    //checksum calculate
     for(int i=CU_START_POS; i < cu_end_addr; i++)
         cu_checksum_cmp += m_bufBinary[i];
 
