@@ -50,8 +50,14 @@ bool CProcHandler::LoadBinary(CArgHandler *devHandler)
     fseek(file, 0, SEEK_END);
     int fileSize = ftell(file);
     m_bufSize = fileSize;
-    fseek(file, 0, SEEK_SET);
 
+    if(m_bufSize != _128K)
+    {
+    	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile size should be 128K(0x20000) but, : 0x%X", m_bufSize);
+        return 0;
+    }    
+
+    fseek(file, 0, SEEK_SET);
     memset(m_bufBinary, 0, m_bufSize * sizeof(unsigned char));
 
     int nCnt = fread(m_bufBinary, sizeof(unsigned char), m_bufSize, file);
@@ -59,11 +65,6 @@ bool CProcHandler::LoadBinary(CArgHandler *devHandler)
     if (nCnt != m_bufSize)	// did not read whole file
     {
     	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "bytes loaded from %s : %d", binfile.c_str(), nCnt);
-        return 0;
-    }
-    else if(m_bufSize != _128K)
-    {
-    	LOG_G2_E(CLog::getLogOwner(), TAG_BINLOADER, "binfile size should be 128K(0x20000) but, : 0x%X", m_bufSize);
         return 0;
     }
     else if(!CheckBinary(m_bufBinary))

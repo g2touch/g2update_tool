@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
         else
         {
             LOG_G2(CLog::getLogOwner(), "PROC_UPDATE", "Load Binary Failed : %s", argHandle->GetBinFilePath().c_str());
+            EXIT_CODE = EXIT_FAIL;
         }
 
         delete ProcHandler;
