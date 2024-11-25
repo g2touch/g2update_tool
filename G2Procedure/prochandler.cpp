@@ -137,14 +137,13 @@ bool CProcHandler::CheckBinary(unsigned char* m_bufBinary)
             cu_virgin_addr = CU2_VIRGIN_CODE_POS + 0x800;
             if(m_bufBinary[CU2_VIRGIN_CODE_POS + i + 0x800] == 0xff)
             {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot Fine CU Virgin code !!!!!!!!");
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot Find CU Virgin code !!!!!!!!");
                 return false;
             }
         }
     }
 
-    LOG_G2_D(CLog::getLogOwner(), TAG, "Cannot Fine CU Virgin addr: 0x%x",cu_virgin_addr);
-
+    LOG_G2_D(CLog::getLogOwner(), TAG, "CU Virgin addr: 0x%x",cu_virgin_addr);
     //cu checksum check
     cu_checksum = (m_bufBinary[cu_virgin_addr + 7] <<24);
     cu_checksum+= (m_bufBinary[cu_virgin_addr + 6] <<16);
