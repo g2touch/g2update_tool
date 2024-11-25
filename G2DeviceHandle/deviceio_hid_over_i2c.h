@@ -36,9 +36,24 @@ namespace G2
                 string TxRequestFwVer(int mSec, int format);
                 int TxRequestHW_Reset();
                 int TxRequestSystem_Reset();
-                int TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update);
-                int TxRequestFwUpdate(unsigned char* file_buf);
-                int TxRequestCuUpdate(unsigned char* file_buf);
+                int TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update, bool bPartition);
+                int TxRequestFwUpdate(unsigned char* file_buf, bool bPartition);
+                int TxRequestCuUpdate(unsigned char* file_buf, bool bPartition);
+                //int TxRequestBASEBINUpdate(unsigned char* file_buf);
+                //int TxRequestLOADBALANCEUpdate(unsigned char* file_buf);
+                int DumpFileInfo(unsigned char* file_buf,unsigned     int partition_address);
+                bool RequestPartitionInfo(bool bFileInfo);
+                int Precheckforupdate(unsigned char* file_buf, bool bBoot_force_update, bool getPartition);
+                int checkFW_CUVirginCode(unsigned char* file_buf, int fwstraddr_pos, int fwvirginaddr, int custraddr, int cuvirginaddr);
+                int BaseBin_start_data(unsigned char* buf, unsigned char region);
+                int BaseBin_erase_data(unsigned char* buf, unsigned char region);
+                int Flash0x09CheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum);
+                int BaseBin_finish(unsigned char* buf, unsigned char region);
+                unsigned short MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx);
+                int File_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, unsigned char  region);
+                int Patition_Request(unsigned char region);
+                int check_VID_PID(unsigned char* file_buf);
+                void SET_basestraddr(unsigned short vid_temp);
 
             protected:
                 void initBuffer();
@@ -55,10 +70,10 @@ namespace G2
                 int TxSingleCmdWaitAck(unsigned char cmd, unsigned char* data, int data_len, int uSecWait);
                 int TryWriteData(unsigned char cmd, unsigned char* data, int data_len, int trial, int mSecWait);
                 int GotoBoot_data(unsigned char* buf);
-                int boot_erase_data(unsigned char* buf);
+                int boot_erase_data(unsigned char* buf, int erase_size);
 				int FWDownReady_data(unsigned char* buf, unsigned int base_address);
 				int FlashErase_data(unsigned char* buf, unsigned int base_address, unsigned int fw_erase_size);
-                int FlashCheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum);
+                int FlashCheckSum_data(unsigned char* buf, unsigned int base_fwstraddress, int file_size, unsigned int fw_checksum);
                 int FlashFinish_data(unsigned char* buf);
                 int system_reset_data(unsigned char* buf);
                 int FW_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd);
@@ -68,11 +83,12 @@ namespace G2
                 int FlashDump(int address, int size, int m_nReadBufCnt, unsigned char index);
                 int FlashCheckSum_Check(unsigned char* buf, unsigned int fw_checksum);
                 int FlashFinish_Check(unsigned char* read_buf);
-                int Fw_write_size(unsigned char* file_buf);
+                int Fw_write_size(unsigned char* file_buf, unsigned int erasesize);
                 int Cu_Erase_data(unsigned char* file_buf, int page_cnt);
                 int dumpTofile_compare(unsigned char* dump_buf, unsigned char* file_buf, int compare_size);
 				bool Check_Nak(unsigned char *Rx_buf);
-				int Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr);
+				int Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr, bool GetPartition);
+				bool Get_Partition_info(int idx, unsigned char* m_abytContent);
 
             private:
                 int m_fd;
@@ -85,8 +101,32 @@ namespace G2
                 unsigned int dbgidx_push;
                 unsigned int dbgidx_pop;
                 bool m_bOpened;
+            public:                
+                unsigned int GetFWStartFullAddress; //Get goto boot
+                unsigned int GetFWStartFullErasesize; //Get goto boot
                 unsigned int GetFWStartAddress;
-                unsigned int GetEraseSize;			
+                unsigned int GetFWEraseSize;
+                unsigned int GetBootStartAddress;
+                unsigned int GetBootEraseSize;
+                unsigned int GetCUStartAddress;
+                unsigned int GetCUEraseSize;
+                unsigned int GetLOADBALANCEStartAddress;
+                unsigned int GetLOADBALANCEEraseSize;
+                unsigned int GetURStartAddress;
+                unsigned int GetUREraseSize;
+                unsigned int GetURDStartAddress;
+                unsigned int GetURDEraseSize;
+                unsigned int GetMTStartAddress; 
+                unsigned int GetMTEraseSize;
+                unsigned int GetFTStartAddress;
+                unsigned int GetFTEraseSize;
+                unsigned int GetBASEBINStartAddress;
+                unsigned int GetBASEBINEraseSize;
+                unsigned short MCUPID;                
+                unsigned short MCUVID;
+                unsigned int BaseStartaddr;
+                unsigned int Protocol_Ver;
+                unsigned char cu_ver;
         };
 
     }

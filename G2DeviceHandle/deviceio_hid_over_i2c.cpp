@@ -50,6 +50,13 @@
 
 #define CMD_FW_VER                      (0xF1)
 
+#define G2_SUB_0x13_FLASH_START         0x04
+#define G2_SUB_0x13_FLASH_ERASE         0x05
+#define G2_SUB_0x13_FLASH_WRITE         0x06
+#define G2_SUB_0x13_0x09_FLASH_CHECKSUM 0x09
+#define G2_SUB_0x13_FLASH_FINISH        0x07
+
+
 #define G2_SUB_0x13_GOTOBOOT            0x80
 #define G2_SUB_0x13_FWDOWNREADY         0x81
 #define G2_SUB_0x13_FWERASE             0x82
@@ -81,10 +88,56 @@
 #define CU_START_POS 0x4000
 #define BOOT_VER_POS 0x400
 #define BOOT_FILE_SIZE 0x4000
+#define BOOT_VIDPID_POS 0x440
+
 #define CU_FILE_SIZE 0xb00
+#define CU9_FILE_SIZE 0xbC0
+#define CU12_FILE_SIZE 0x3300
+
+
 #define CU_PAGE_CNT 0x2c
 
 #define DUMP_SIZE 0x100
+
+#define PARTITION_ADDR 0x450
+#define PARTITION_ADDR_MCHIP 0x350
+
+//partition table index
+#define BOOT_REGION         0x00
+#define CU_REGION           0x01
+#define BASEBIN_REGION      0x06
+#define APP_REGION          0x10
+#define MT_REGION           0x20
+#define FT_REGION           0x21
+#define BASEBIN_INTEGRITY   0x30
+#define TIC_INTEGRITY       0x31
+#define LOAD_BALANCE_REGION 0x40
+#define UR_REGION           0x50
+#define URD_REGION          0x51
+
+//MCU VID
+#define STM_VID      0x0483
+#define GD_VID       0x28E9
+#define MCHIP_VID    0x04D8
+#define INFINION_VID 0x04B4
+
+#define STM_U535_PID      0x0217
+
+#define G2_FLASH_REGION_ALL 0xAA
+#define G2_SUB_0x13_PARTITION_REQUEST_INFO 0x00
+
+#define ADDRESS_META_DATA_IN_BOOT     0x400
+
+#define ADDRESS_META_DATA_IN_APP     0x200
+#define ADDRESS_META_DATA_IN_MCHIP_U535     0x300
+
+#define OFFSET_MCU_TYPE_IN_META_DATA 0x40
+
+#define GD_STML432_FWSTRADDRR_POS 0x8200
+#define GD_STML432_FWVIRGIN_CODE_POS 0x1fff0
+#define STML432_VIRGIN_CODE_POS 0x57F0
+#define GD_VIRGIN_CODE_POS 0x5FF0
+
 
 using namespace G2;
 using namespace G2::DeviceIO;
@@ -94,7 +147,11 @@ using namespace G2::DeviceIO;
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
     m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
     index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0), 
-	m_bOpened(false), GetFWStartAddress(0), GetEraseSize(0)
+	m_bOpened(false),GetFWStartFullAddress(0),GetFWStartFullErasesize(0), GetFWStartAddress(0), GetFWEraseSize(0),GetBootStartAddress(0),GetBootEraseSize(0),
+	GetCUStartAddress(0), GetCUEraseSize(0), GetLOADBALANCEStartAddress(0), GetLOADBALANCEEraseSize(0),
+	GetURStartAddress(0), GetUREraseSize(0), GetURDStartAddress(0), GetURDEraseSize(0), GetMTStartAddress(0), GetMTEraseSize(0),
+    GetFTStartAddress(0), GetFTEraseSize(0), GetBASEBINStartAddress(0), GetBASEBINEraseSize(0), MCUPID(0), MCUVID(0),
+    BaseStartaddr(0), Protocol_Ver(0), cu_ver(0)
 {
     /* malloc out_buffer, in_buffer */
     out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
@@ -107,6 +164,7 @@ DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
     dbgidx_push = 0;
     dbgidx_pop = 0;
 }
+
 
 DeviceIO_hid_over_i2c::~DeviceIO_hid_over_i2c()
 {
@@ -581,7 +639,6 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     {
         waitRxData(m_fd, uSecWait);
         size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
-        LOG_G2_D(CLog::getLogOwner(), TAG, "size : %d", size);
     }
 
     size = CreateCmdBuffer(cmd, data, data_len);	// m_buffer allocated
@@ -684,24 +741,235 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
     return "";
 }
 
+/*
+int DeviceIO_hid_over_i2c::TxRequestBASEBINUpdate(unsigned char* file_buf)
+{
+    LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequest BaseBins Update START");
+
+    unsigned char buf[64];
+
+    int buf_size = 0;
+    int nRequestResult = 0;
+    unsigned char send_buffer[256]={0,};
+    int pos = 0;
+    int end_pos = 0;
+    int send_length = 0x100;
+    unsigned int checksum = 0;
+
+    pos = GetBASEBINStartAddress;
+    end_pos = GetBASEBINEraseSize;
+    
+
+    //BASEBIN Start
+    buf_size = BaseBin_start_data(buf, BASEBIN_REGION);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin_erase_data error");
+        return nRequestResult;
+    }
+
+    //BASEBIN erase
+    buf_size = BaseBin_erase_data(buf, BASEBIN_REGION);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin_erase_data error");
+        return nRequestResult;
+    }
+
+    //BASEBIN WRITE
+    while(pos < end_pos)
+    {
+        LOG_G2_D( CLog::getLogOwner(), TAG, "BaseBin send_pos : %X, end_pos : %X", pos, end_pos);
+        memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
+        nRequestResult = File_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD, BASEBIN_REGION);
+
+        if (nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Write error");
+            return nRequestResult;
+        }
+
+        pos+=send_length;
+    }
+
+    //checksum calculate
+    for(int i=pos; i<end_pos; ++i)
+        checksum += file_buf[i];
+
+
+    //BASEBIN CHECKSUM
+    buf_size = Flash0x09CheckSum_data(buf,end_pos,checksum);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashCheckSum send error");
+        return nRequestResult;
+    }
+
+    if(nRequestResult == 1)
+    {
+        LOG_G2(CLog::getLogOwner(), TAG, "BaseBin Update Success");
+    }
+    else
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Update Fail");
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Do not shut down !! Please retry again.");
+    }
+
+    return nRequestResult;
+
+}
+
 // Try 5 times
-int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
+int DeviceIO_hid_over_i2c::TxRequestLOADBALANCEUpdate(unsigned char* file_buf)
+{
+    LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequest BaseBins Update START");
+
+    unsigned char buf[64];
+
+    int buf_size = 0;
+    int nRequestResult = 0;
+    unsigned char send_buffer[256]={0,};
+    int pos = 0;
+    int end_pos = 0;
+    int send_length = 0x100;
+    unsigned int checksum = 0;
+
+
+    pos = GetLOADBALANCEStartAddress;
+    end_pos = GetLOADBALANCEEraseSize;
+    
+
+    //BASEBIN Start
+    buf_size = BaseBin_start_data(buf, LOAD_BALANCE_REGION);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Load Balance erase_data error");
+        return nRequestResult;
+    }
+
+    //BASEBIN erase
+    buf_size = BaseBin_erase_data(buf, LOAD_BALANCE_REGION);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Load Balance erase_data error");
+        return nRequestResult;
+    }
+
+    //BASEBIN WRITE
+    while(pos < end_pos)
+    {
+        LOG_G2_D( CLog::getLogOwner(), TAG, "Load Balance send_pos : %X, end_pos : %X", pos, end_pos);
+        memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
+        nRequestResult = File_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD, LOAD_BALANCE_REGION);
+
+        if (nRequestResult <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Load Balance Write error");
+            return nRequestResult;
+        }
+
+        pos+=send_length;
+    }
+
+    //checksum calculate
+    for(int i=pos; i<end_pos; ++i)
+        checksum += file_buf[i];
+
+
+    //BASEBIN CHECKSUM
+    buf_size = Flash0x09CheckSum_data(buf,end_pos,checksum);
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
+
+    if (nRequestResult <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FlashCheckSum send error");
+        return nRequestResult;
+    }
+
+    if(nRequestResult == 1)
+    {
+        LOG_G2(CLog::getLogOwner(), TAG, "Load Balance Update Success");
+    }
+    else
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Load Balance Update Fail");
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Do not shut down !! Please retry again.");
+    }
+
+    return nRequestResult;
+
+}
+*/
+
+// Try 3 times
+int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPartition)
 {
     unsigned char send_buffer[256]={0,};
     unsigned char dump_buffer[0x1000]={0,};
     unsigned short send_length = 0x40;
     int pos = CU_START_POS;
+    int custrpos_File = CU_START_POS;
     int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
     unsigned char buf[64];
     int buf_size = 0;
     int cu_page = 0x320;
-    int cu_page_count = CU_PAGE_CNT;
-	unsigned int base_address = 0x08004000;
+    int cu_page_count = 0;
     int nRequestResult = TxRequestHW_Reset();
     int retry = 0;
+    unsigned int FWStartAddress = 0;
+    unsigned int CUStartAddress = 0x08004000;    
 
-    GetFWStartAddress = 0x08008000;
+    LOG_G2_D(CLog::getLogOwner(), TAG, "BaseStartaddr 0x%x, GetFWStartAddress 0x%x",BaseStartaddr, GetFWStartAddress);    
+    
+    if(bPartition == true)
+    {    
+        FWStartAddress = BaseStartaddr + GetFWStartAddress;
+        CUStartAddress = BaseStartaddr + GetCUStartAddress;
+        pos = GetCUStartAddress;
+        cuend_pos = GetCUStartAddress + GetCUEraseSize;
+        custrpos_File = GetCUStartAddress;
 
+        if (file_buf[pos] == 0x07)
+            cuend_pos = GetCUStartAddress+ 0x630;
+        else if (file_buf[pos] == 0x09) 
+            cuend_pos = GetCUStartAddress + CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x09) 
+            cuend_pos = GetCUStartAddress + CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x0A) 
+            cuend_pos = GetCUStartAddress+ CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x0B) 
+            cuend_pos = GetCUStartAddress + 0x930;
+        else if (file_buf[pos] == 0x0C) 
+            cuend_pos = GetCUStartAddress + CU12_FILE_SIZE;           
+    }
+    else
+    {
+        FWStartAddress = 0x08008000;
+
+        if (file_buf[pos] == 0x07)
+            cuend_pos = CU_START_POS+ 0x630;
+        else if (file_buf[pos] == 0x09) 
+            cuend_pos = CU_START_POS + CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x09) 
+            cuend_pos = CU_START_POS + CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x0A) 
+            cuend_pos = CU_START_POS+ CU9_FILE_SIZE;
+        else if (file_buf[pos] == 0x0B) 
+            cuend_pos = CU_START_POS + 0x930;
+        else if (file_buf[pos] == 0x0C) 
+            cuend_pos = CU_START_POS + CU12_FILE_SIZE;        
+    }
+
+    cu_page_count = ((cuend_pos - pos) % send_length == 0) ? ((cuend_pos - pos) / send_length) : (((cuend_pos - pos) / send_length) + 1);
+    LOG_G2_D(CLog::getLogOwner(), TAG, "cu_page_count 0x%x",cu_page_count);
+
+    
     if (nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
@@ -719,7 +987,17 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     }
     usleep(300000);
 
-    buf_size = FWDownReady_data(buf, GetFWStartAddress);
+    if(bPartition == true)
+    {
+        if((GetFWStartFullAddress == GetFWStartAddress) && (GetFWStartFullErasesize == GetFWEraseSize))
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "FW info not matched 0x%x, 0x%x, 0x%x, 0x%x", GetFWStartFullAddress, GetFWStartAddress, GetFWStartFullErasesize , GetFWEraseSize);
+            return -1;
+        }
+    }
+    LOG_G2_D(CLog::getLogOwner(), TAG, "StartAddress 0x%x",FWStartAddress);
+
+    buf_size = FWDownReady_data(buf, FWStartAddress);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
@@ -728,10 +1006,12 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         return nRequestResult;
     }
 
+    LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FWDownReady OK");    
+
     while(retry < CMD_F1_RETRY_MAX)
     {
         //CUErase
-        if (file_buf[pos] == 0x09) cu_page_count += 3;
+
         buf_size = Cu_Erase_data(buf, cu_page_count);
         cuend_pos = CU_START_POS + (cu_page_count * send_length);  // update with page count
         nRequestResult = TryWriteData(CMD_CU_ERASE, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
@@ -772,7 +1052,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
     while(pos < (cu_page_count * send_length))
     {
         LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump send_pos : %X, end_pos : %X", pos, (cu_page_count * send_length));    
-        nRequestResult = Dump(dump_buffer+pos, base_address+pos, DUMP_SIZE);
+        nRequestResult = Dump(dump_buffer+pos, CUStartAddress+pos, DUMP_SIZE);
 
         if(nRequestResult <= 0)
         {
@@ -781,9 +1061,11 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
         }
 
         pos+=DUMP_SIZE;
-    }
+    }    
 
-    nRequestResult = dumpTofile_compare(dump_buffer, file_buf+CU_START_POS, CU_FILE_SIZE);
+    LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump addr : %X, size : %X", CUStartAddress, (cu_page_count * send_length));    
+
+    nRequestResult = dumpTofile_compare(dump_buffer, file_buf+custrpos_File, (cu_page_count * send_length));
     if(nRequestResult == 1)
     {
         LOG_G2_D(CLog::getLogOwner(), TAG, "CU Write Success");
@@ -798,41 +1080,63 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf)
 
 
 // Try 5 times
-int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
+int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf, bool bPartition)
 {
     unsigned char buf[64];
     int buf_size = 0;
     int nRequestResult = 0;
     int pos = FW_START_POS;
-    int fw_size = Fw_write_size(file_buf);
-    int fw_end_pos = (FW_START_POS 
-+ fw_size);
+    int strpos_infile = FW_START_POS;
+    int fw_size = 0x18000; 
+    int fw_end_pos = (FW_START_POS + fw_size);
     int send_length = 0x100;
     unsigned char send_buffer[256]={0,};
     unsigned int fw_checksum = 0;
     unsigned char* read_buf;
-    unsigned int base_address = 0x08008000; //fw area
+    unsigned int base_fwstraddress = 0x08008000; //fw area
     unsigned int fw_erase_size = 0x00018000;
-    unsigned short addr_idx = 0x8200;	
+    unsigned int fw_metadata_pos = ADDRESS_META_DATA_IN_APP;
+    unsigned short addr_idx = 0;
 
-    GetFWStartAddress = base_address;
-    GetEraseSize = fw_erase_size;	
+    if((MCUVID == MCHIP_VID) || ((MCUVID == STM_VID) && (MCUPID == STM_U535_PID)))
+    {
+        fw_metadata_pos = ADDRESS_META_DATA_IN_MCHIP_U535;
+    }
+
+    if(bPartition == true)
+    {
+        pos = GetFWStartAddress;
+        strpos_infile = GetFWStartAddress;
+        base_fwstraddress = GetFWStartAddress + BaseStartaddr;
+        fw_size = Fw_write_size(file_buf, (GetFWStartAddress + GetFWEraseSize - 0x10));
+        fw_end_pos = (GetFWStartAddress + fw_size);
+        addr_idx = GetFWStartAddress + fw_metadata_pos;
+    }
+    else
+    {
+        GetFWEraseSize = fw_erase_size;	
+        Fw_write_size(file_buf, GetFWEraseSize);
+        fw_size = Fw_write_size(file_buf, (FW_START_POS + fw_erase_size - 0x10));
+        fw_end_pos = (FW_START_POS + fw_size);
+        addr_idx = FW_START_POS + fw_metadata_pos;
+    }
 
     if (fw_size == 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "fw_write_size ERR");
         return nRequestResult;
-    }
-
-    nRequestResult = Get_AppStartAddr_fromBinFile(file_buf, addr_idx, &base_address);
+    }    
+    
+    nRequestResult = Get_AppStartAddr_fromBinFile(file_buf, addr_idx, &base_fwstraddress, bPartition);
     if(nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "ERROR : FW File hasn't Address!!!");
         return nRequestResult;
-    }	
+    }
+
 
     //FwDownReady
-    buf_size = FWDownReady_data(buf, base_address);
+    buf_size = FWDownReady_data(buf, base_fwstraddress);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
 
     if (nRequestResult <= 0)
@@ -842,7 +1146,7 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     }
 
     //FLASHERASE
-    buf_size = FlashErase_data(buf, GetFWStartAddress, GetEraseSize);
+    buf_size = FlashErase_data(buf, base_fwstraddress, GetFWEraseSize);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 5000);
 
     if (nRequestResult <= 0)
@@ -868,11 +1172,11 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     }
 
     //checksum calculate
-    for(int i=FW_START_POS; i<fw_end_pos; ++i)
+    for(int i=strpos_infile; i<fw_end_pos; ++i)
         fw_checksum += file_buf[i];
 
     //FLASHCHECKSUM
-    buf_size = FlashCheckSum_data(buf,fw_size,fw_checksum);
+    buf_size = FlashCheckSum_data(buf, base_fwstraddress, fw_size,fw_checksum);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
 
     if (nRequestResult <= 0)
@@ -917,23 +1221,23 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf)
     return nRequestResult;
 }
 
-int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf)
+int DeviceIO_hid_over_i2c::Fw_write_size(unsigned char* file_buf, unsigned int erasesize)
 {
     int i=0;
     int write_size=0;
 
     for(i=0; i<4; i++)
     {
-        if(file_buf[0x1fff0+i] != 0xa5)
+        if(file_buf[(erasesize)+i] != 0xa5)
         {
             return write_size;
         }
     }
 
-    write_size = (file_buf[0x1fff0 + 11] <<24);
-    write_size+= (file_buf[0x1fff0 + 10] <<16);
-    write_size+= (file_buf[0x1fff0 + 9] <<8);
-    write_size+= file_buf[0x1fff0 + 8];
+    write_size = (file_buf[erasesize + 11] <<24);
+    write_size+= (file_buf[erasesize + 10] <<16);
+    write_size+= (file_buf[erasesize + 9] <<8);
+    write_size+= file_buf[erasesize + 8];
 
     if(write_size%0x100 != 0)
     {
@@ -974,8 +1278,584 @@ int DeviceIO_hid_over_i2c::TxRequestSystem_Reset()
     return nRequestResult;
 }
 
+unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx)
+{
+    LOG_G2_I(CLog::getLogOwner(), TAG, "MCUType_Verify START");
 
-int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update)
+    unsigned char temp[4]={0,};
+    unsigned char dump_buffer[0x1000]={0,};
+    int iRet = 1;
+    int a = 0;
+    int bootver_straddress = 0x08000000;
+
+    //check mcu type in file
+    MCUVID = 0;
+    MCUPID = 0;
+    temp[0] = file_buf[filebuf_idx];
+    temp[1] = file_buf[filebuf_idx + 1];
+    temp[2] = file_buf[filebuf_idx + 2];
+    temp[3] = file_buf[filebuf_idx + 3];
+
+
+    //check repeat
+    for (a = 1; a < 4; a++)
+    {
+        if (temp[0] != file_buf[filebuf_idx + (a * 4)] || temp[1] != file_buf[filebuf_idx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_idx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_idx + (a * 4 + 3)])
+        {
+            MCUVID = STM_VID;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);
+            return MCUPID;// No MCU Type repeat pattern found. regard as old STM FW
+        }
+    }
+
+    //check repeat with boot
+    for (a = 0; a < 4; a++)
+    {
+        if (temp[0] != file_buf[filebuf_bootidx + (a * 4)] || temp[1] != file_buf[filebuf_bootidx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_bootidx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_bootidx + (a * 4 + 3)])
+        {
+            MCUVID = STM_VID;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);
+            return MCUPID;// No MCU Type repeat pattern found. regard as old STM FW
+        }
+    }    
+
+    //refer file
+
+    bootver_straddress = BaseStartaddr;
+    iRet= Dump(dump_buffer, bootver_straddress + BOOT_VIDPID_POS, 0x10);    
+    if(iRet <= 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "MCU Type Dump Fail");
+        return iRet; //boot_ver same
+    }
+
+
+    for(int i=0; i<16; i+=4)
+    {
+        iRet = dumpTofile_compare(dump_buffer, file_buf+filebuf_idx, 0x10);
+        if(iRet == 0) //non matched
+        {
+            //STM L432
+            MCUVID = STM_VID;
+            MCUPID = 0x00;
+            BaseStartaddr = 0x08000000;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);            
+            return MCUPID;
+        }
+    }
+
+    MCUVID = (unsigned short)((file_buf[BOOT_VIDPID_POS + 1] << 8) + file_buf[BOOT_VIDPID_POS]);
+    MCUPID = (unsigned short)((file_buf[BOOT_VIDPID_POS + 3] << 8) + file_buf[BOOT_VIDPID_POS + 2]);
+    
+    SET_basestraddr(MCUVID); //set basestartaddr again
+    LOG_G2_D(CLog::getLogOwner(), TAG, "MCUVID 0x%x, MCUPID 0x%x",MCUVID, MCUPID);
+
+    return MCUPID;
+}
+
+void DeviceIO_hid_over_i2c::SET_basestraddr(unsigned short vid_temp)
+{
+    LOG_G2_D(CLog::getLogOwner(), TAG, "SET_basestraddr 0x%x", vid_temp);
+    if(vid_temp == STM_VID) //STM
+    {
+        BaseStartaddr = 0x08000000;
+    }
+    else if(vid_temp == GD_VID) //GD
+    {
+        BaseStartaddr = 0x08000000;
+    }
+    else if(vid_temp == MCHIP_VID) //MicroChip
+    {
+        BaseStartaddr = 0x00000000;
+    }    
+    else if(vid_temp == INFINION_VID) //Infinion
+    {
+        BaseStartaddr = 0x10000000;                
+    }
+}
+
+int DeviceIO_hid_over_i2c::checkFW_CUVirginCode(unsigned char* file_buf, int fwstraddr_pos ,int fwvirginaddr, int custraddr, int cuvirginaddr)
+{
+    unsigned int cu_checksum=0, cu_checksum_cmp = 0;
+    int i=0;
+    unsigned int cu_end_size = 0;
+    unsigned int cu_end_addr = 0;
+    unsigned int fwstraddr = 0x08008000;
+
+    if(GetFWStartAddress != 0x00)
+        fwstraddr = BaseStartaddr + GetFWStartAddress;
+
+    //fw address
+    for(i=0; i<13; i+=4)
+    {
+        if((file_buf[fwstraddr_pos+i+3] == (unsigned char)((fwstraddr >> 24)&0xff)) && (file_buf[fwstraddr_pos+i+2] ==(unsigned char)((fwstraddr >> 16)&0xff)) && (file_buf[fwstraddr_pos+i+1] == (unsigned char)((fwstraddr >> 8)&0xff)) && (file_buf[fwstraddr_pos+i] == (unsigned char)((fwstraddr)&0xff)))
+        {
+
+        }
+        else
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "binfile fw address not match !!!!!!!!");
+            return -1;
+        }
+    }
+    
+    //fw write size magic code
+    for(i=0; i<4; i++)
+    {
+        if(file_buf[fwvirginaddr+i] != 0xa5)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "binfile fw magic error !!!!!!!!");
+            return -1;
+        }
+    }
+
+
+    //cu magic code check
+    for(i=0; i<8; i++)
+    {
+        if(file_buf[cuvirginaddr+i] == 0xff)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot Find CU Virgin code !!!!!!!!");
+            return -1;
+        }
+    }
+
+    //cu checksum check
+    cu_checksum = (file_buf[cuvirginaddr + 7] <<24);
+    cu_checksum+= (file_buf[cuvirginaddr + 6] <<16);
+    cu_checksum+= (file_buf[cuvirginaddr + 5] <<8);
+    cu_checksum+= file_buf[cuvirginaddr + 4];
+
+    cu_end_size = (file_buf[cuvirginaddr + 15] <<24);
+    cu_end_size+= (file_buf[cuvirginaddr + 14] <<16);
+    cu_end_size+= (file_buf[cuvirginaddr + 13] <<8);
+    cu_end_size+= file_buf[cuvirginaddr + 12];
+
+    if(cu_end_size == 0xFFFFFFFF) //don't have size
+    {
+        if ((cu_ver == 0x02) || (cu_ver == 0x03))
+        {            
+            cu_end_addr = custraddr + CU_FILE_SIZE;
+        }
+        if(cu_ver == 0x09)
+        {            
+            cu_end_addr = custraddr + CU9_FILE_SIZE;
+        }
+        if(cu_ver == 0x0A)
+        {     
+            LOG_G2_D(CLog::getLogOwner(), TAG, "cu_end_addr set");
+            cu_end_addr = custraddr + CU9_FILE_SIZE;
+        }
+        if(cu_ver == 0x0C)
+        {            
+            cu_end_addr = custraddr + CU12_FILE_SIZE;
+        }        
+    }
+    else
+    {
+        cu_end_addr = custraddr + cu_end_size;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "cu_addr !!!!!!!! 0x%x, 0x%x 0x%x, 0x%x 0x%x", custraddr, cu_end_addr, cuvirginaddr, cu_end_size, cu_ver);
+
+
+    //checksum calculate
+    for(int i=custraddr; i < (int)cu_end_addr; i++)
+        cu_checksum_cmp += file_buf[i];
+
+    if(cu_checksum != cu_checksum_cmp)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "binfile cu checksum error !!!!!!!! 0x%x, 0x%x", cu_checksum, cu_checksum_cmp);
+        return -1;
+    }
+
+
+    return 0;
+
+}
+
+
+int DeviceIO_hid_over_i2c::Precheckforupdate(unsigned char* file_buf, bool bBoot_force_update, bool getPartition)
+{
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate START");
+    int nRequestResult = 0;
+    unsigned int partition_address = PARTITION_ADDR;
+    int fwstraddr_pos = 0x200;
+
+    //check VID PID
+    nRequestResult = check_VID_PID(file_buf);
+    if(nRequestResult < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "VID & PID Not matched");
+        return nRequestResult;
+    }
+
+    LOG_G2_E(CLog::getLogOwner(), TAG, "VID & PID Matched");
+
+    if(MCUVID == MCHIP_VID)
+        partition_address = PARTITION_ADDR_MCHIP;
+
+    if((MCUVID == MCHIP_VID) || ((MCUVID == STM_VID) && (MCUPID == STM_U535_PID)))
+    {
+        fwstraddr_pos = 0x300;
+    }
+
+    nRequestResult = DumpFileInfo(file_buf, partition_address);
+    if(nRequestResult < 0)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Partition Table Not matched");
+        return nRequestResult;
+    }    
+
+    //SetStartAddress
+    LOG_G2_D(CLog::getLogOwner(), TAG, "getPartition %d",getPartition);
+    if(getPartition == true)
+    {
+        //check cu version
+        cu_ver = file_buf[GetCUStartAddress];
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "GetCUStartAddress 0x%x, GetCUEraseSize 0x%x",GetCUStartAddress, GetCUEraseSize);        
+    
+        nRequestResult = checkFW_CUVirginCode(file_buf, (GetFWStartAddress + fwstraddr_pos), (GetFWStartAddress + GetFWEraseSize - 0x10), GetCUStartAddress ,(GetCUStartAddress + GetCUEraseSize - 0x10));
+        if(nRequestResult < 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "CU VirginCode Not matched");
+            return nRequestResult;
+        }
+    }
+    else
+    {
+        cu_ver = file_buf[CU_START_POS];
+        
+        nRequestResult = checkFW_CUVirginCode(file_buf,GD_STML432_FWSTRADDRR_POS, GD_STML432_FWVIRGIN_CODE_POS, CU_START_POS, STML432_VIRGIN_CODE_POS);
+        if(nRequestResult < 0)
+        {
+            nRequestResult = checkFW_CUVirginCode(file_buf,GD_STML432_FWSTRADDRR_POS, GD_STML432_FWVIRGIN_CODE_POS, CU_START_POS, GD_VIRGIN_CODE_POS);
+            if(nRequestResult < 0)
+            {                
+                LOG_G2_E(CLog::getLogOwner(), TAG, "CU VirginCode Not matched");
+                return nRequestResult;
+            }
+        }
+    }
+    
+
+    return nRequestResult; //
+
+}
+
+int DeviceIO_hid_over_i2c::check_VID_PID(unsigned char* file_buf)
+{
+
+    int filebuf_idx = (GetFWStartAddress + ADDRESS_META_DATA_IN_APP + OFFSET_MCU_TYPE_IN_META_DATA);
+    int filebuf_bootidx = (GetBootStartAddress + ADDRESS_META_DATA_IN_BOOT + OFFSET_MCU_TYPE_IN_META_DATA);    
+    unsigned short PID = 0;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Check_VID_PID START");
+
+    PID = MCUType_Verify(file_buf, filebuf_idx, filebuf_bootidx);    
+    if(PID == 0)
+    {
+        PID = MCUType_Verify(file_buf, filebuf_idx + 0x100, filebuf_bootidx); // research again 0x340 for Microchip & STM U535
+        LOG_G2_D(CLog::getLogOwner(), TAG, "PID 0x%x",PID);
+        
+        if(PID == 0)
+        {
+            MCUVID = STM_VID;
+            BaseStartaddr = 0x08000000;
+        }
+    }
+
+    return PID;
+}
+
+
+bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
+{
+    int read_retry = 3;
+    bool bRet = false;
+    int uSecWait = GetCmdWaitAckTime(0x13, 1000); 
+    unsigned char m_pcReadBuf[HID_INPUT_MAX_LEN];
+    unsigned char data_buffer[0x200];
+    int size = HID_INPUT_MAX_LEN;    
+    int pos = 0;
+    int iRet = 0;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "RequestPartitionInfo Start");
+
+    //send partition request
+    iRet =  Patition_Request(G2_FLASH_REGION_ALL);
+    
+    if(iRet < 4)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Patition request Send fail");
+        return bRet;
+    }
+    
+    while(pos < size)
+    {        
+        waitRxData(m_fd, uSecWait);
+        iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, CMD_MAIN_CMD, G2_SUB_0x13_PARTITION_REQUEST_INFO); //dump
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "iRet %d",iRet);
+        if( read_retry == 0)
+        {
+            return bRet ;
+        }        
+
+        read_retry--;
+        if(iRet < 36) //partition header + one partition info
+        {
+            continue;
+        }
+
+        if(pos == 0)
+        {
+            if(m_pcReadBuf[4] !=0x13) continue;
+
+            memcpy(data_buffer, m_pcReadBuf+8, iRet-8);
+            
+            if((int)packet_length >= (iRet-9))
+            {
+                packet_length-= (iRet-9); //start packet 7 + next packet header 2
+            }
+            else
+            {
+                packet_length =0;
+            }
+
+            pos+=(iRet-8);
+            size = ((unsigned int)m_pcReadBuf[5] << 8) + (unsigned int)m_pcReadBuf[6];
+
+            LOG_G2_D(CLog::getLogOwner(), TAG, "packet_length: %x", packet_length);
+        }
+        else
+        {
+            memcpy(data_buffer+pos, m_pcReadBuf+2, iRet-2);
+            if((int)packet_length >= iRet)
+            {
+                packet_length-=iRet; //+report id
+            }
+            else
+            {
+                packet_length=0;
+            }
+            pos+=(iRet-2);
+            
+            LOG_G2_D(CLog::getLogOwner(), TAG, "pos: %x, size: %x", pos, size);
+        }
+
+        LOG_G2_I(CLog::getLogOwner(), TAG, "remain packet_length : %x",packet_length);
+
+    }
+
+    //Input partition
+    if (data_buffer[1] == 0x00)
+    {
+        if (data_buffer[0] == 0xaa)
+        {
+            BaseStartaddr = (unsigned int)((data_buffer[8] << 24) + (data_buffer[7] << 16) + (data_buffer[6] << 8) + (data_buffer[5] << 0)); //little endian
+            Protocol_Ver = (short)((data_buffer[14] * 256) + data_buffer[13]); //little endian
+
+            LOG_G2_D(CLog::getLogOwner(), TAG, "BaseStartaddr : 0x%x, Protocol Ver 0x%x",BaseStartaddr,Protocol_Ver);
+            if (data_buffer[3] < 0x10)
+            {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Patition didn't use");
+                return false;
+            }
+            else
+            {
+                unsigned char cnt_record = data_buffer[11];
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Protocol Version : %x",cnt_record);
+
+
+                for (int a = 0; a < cnt_record; a++)
+                {
+                    if ((data_buffer[19 + (a * 8)] == 1) || (data_buffer[20 + (a * 8)] == LOAD_BALANCE_REGION)) //some fw didn't set LBP flag
+                    {
+                        bRet = Get_Partition_info(20 + (a * 8), data_buffer);
+                    }
+                }
+            }
+        }
+        else
+        {
+            bRet = Get_Partition_info(4, data_buffer); //real data only
+        }
+    }
+    else
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Patition request NAK");
+        bRet = false;
+    }    
+
+    return bRet;
+}
+
+bool DeviceIO_hid_over_i2c::Get_Partition_info(int idx, unsigned char* m_abytContent)
+{
+    unsigned int str_addr = (unsigned int)((m_abytContent[idx + 1]) + (m_abytContent[idx + 2] << 8)) * 512;
+    unsigned int size = (unsigned int)((m_abytContent[idx + 3]) + (m_abytContent[idx + 4] << 8)) * 512;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->idx:%d",idx);
+
+    if (m_abytContent[idx] == APP_REGION)
+    {
+        GetFWStartAddress = str_addr;
+        GetFWEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region MAINAPP str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }
+    else if (m_abytContent[idx] == BOOT_REGION)
+    {
+        GetBootStartAddress = str_addr;
+        GetBootEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region BOOT str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }
+    else if (m_abytContent[idx] == CU_REGION)
+    {
+        GetCUStartAddress = str_addr;
+        GetCUEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region CU str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }
+    else if (m_abytContent[idx] == BASEBIN_REGION)
+    {
+        GetBASEBINStartAddress = str_addr;
+        GetBASEBINEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region BASEBIN str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }
+    else if (m_abytContent[idx] == UR_REGION)
+    {
+        GetURStartAddress = str_addr;
+        GetUREraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region UR str_addr: 0x%x  size: 0x%x",str_addr, size);
+
+    }
+    else if (m_abytContent[idx] == URD_REGION)
+    {
+        GetURDStartAddress = str_addr;
+        GetURDEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region URD str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }
+    else if (m_abytContent[idx] == LOAD_BALANCE_REGION)
+    {
+        GetLOADBALANCEStartAddress = str_addr;
+        GetLOADBALANCEEraseSize = size;
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region LBP str_addr: 0x%x  size: 0x%x",str_addr, size);
+    }    
+
+    return true;
+    
+}
+
+
+int DeviceIO_hid_over_i2c::DumpFileInfo(unsigned char* file_buf, unsigned int partition_address)
+{
+
+    int tablecount = file_buf[partition_address + 0x19];
+    //int Partition_structure_Ver = file_buf[partition_address + 0x11];
+    int i=0, index = 0;
+    int tableactive = 0;
+    int nRet = 1;
+    unsigned int file_straddr = 0;
+    unsigned int file_erasesize = 0;    
+
+    int id1 = file_buf[partition_address + 0x10];
+    int id2 = file_buf[partition_address + 0x18];
+
+    if((id1 == 0x00) && (id2 == 0x01) && (tablecount =! 0x00))
+    {
+        for( i =0; i< tablecount; i++)
+        {
+            index = file_buf[partition_address + 0x22 + (i*8)];
+            tableactive = file_buf[partition_address + 0x21 + (i*8)];
+
+            if(tableactive == 1)
+            {
+                switch(index)
+                {
+                    case BOOT_REGION:
+                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8) )* 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8))* 0x200;
+                        
+                        if(GetBootStartAddress != file_straddr)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "Boot straddr: 0x%x, Fileaddr: 0x%x",GetBootStartAddress, file_straddr);
+                            nRet = -1;
+                            return nRet;
+                        }
+                    
+                        if(GetBootEraseSize != file_erasesize)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "Boot Erase straddr: 0x%x, Fileaddr: 0x%x",GetBootEraseSize, file_erasesize);
+                            nRet = -1;
+                            return nRet;
+                        }                        
+                        break;
+                    case CU_REGION:
+                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8)) * 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8))* 0x200;
+                    
+                        if(GetCUStartAddress != file_straddr)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU straddr: 0x%x, Fileaddr: 0x%x",GetCUStartAddress, file_straddr);                        
+                            nRet = -1;
+                            return nRet;
+                        }
+
+                        if(GetCUEraseSize != file_erasesize)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);                        
+                            nRet = -1;
+                            return nRet;
+                        }
+
+                        break;
+                    case APP_REGION:
+                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8)) * 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8)) * 0x200;
+                    
+                        if(GetFWStartAddress != file_straddr)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW straddr: 0x%x, Fileaddr: 0x%x",GetFWStartAddress, file_straddr);                        
+                            nRet = -1;
+                            return nRet;
+                        }
+
+                        if(GetFWEraseSize != file_erasesize)
+                        {
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);                        
+                            nRet = -1;
+                            return nRet;
+                        }
+                        break;
+                    case LOAD_BALANCE_REGION:
+                        //GetLOADBALANCEStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
+                        //GetLOADBALANCEEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                    
+                        break;
+                    case UR_REGION:
+                        //GetURStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
+                        //GetUREraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                    
+                        break;
+                    case MT_REGION:
+                        //GetMTStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
+                        //GetMTEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);
+                    case FT_REGION:
+                        //GetFTStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
+                        //GetFTEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);
+                    case BASEBIN_INTEGRITY:
+                        //GetBASEBINStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
+                        //GetBASEBINEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                
+                        break;
+                }
+            }
+        }
+    }
+
+    return nRet;    
+}
+
+
+int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update, bool bPartition)
 {
     LOG_G2_I(CLog::getLogOwner(), TAG, "TxRequestBootUpdate START");
 
@@ -998,23 +1878,32 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         return 2;
     }
 
+    if(bPartition == true)
+    {
+        bootver_address = BaseStartaddr + GetBootStartAddress + 0x400;
+        bootstart_address = BaseStartaddr + GetBootStartAddress;
+        boot_end_pos = GetBootEraseSize;
+        pos = GetBootStartAddress;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Boot strpos : 0x%x, endpos : 0x%x",pos, boot_end_pos);
+
     //boot ver
     if(bBoot_force_update == false) //boot force update option
     {
         char curr_boot[9]={0,}, targ_boot[9]={0,};
         nRequestResult = Dump(dump_buffer, bootver_address, 0x20);
-
         if(nRequestResult <= 0)
         {
             LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail");
-            return nRequestResult; //boot_ver same
+            return nRequestResult;
         }
 
         nRequestResult = dumpTofile_compare(dump_buffer, file_buf+BOOT_VER_POS, 0x20);
 
         memcpy((char*)curr_boot, (char*)(dump_buffer+8), 8);
         memcpy((char*)targ_boot, (char*)(file_buf+BOOT_VER_POS+8), 8);
-        //boot_ver check
+        //boot_ver check`   `
         if(nRequestResult == 1)
         {
             LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
@@ -1030,17 +1919,8 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         }
     }
 
-    //HW Reset
-    nRequestResult = TxRequestHW_Reset();
-    if (nRequestResult <= 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
-        return nRequestResult;
-    }
-    usleep(150000);
-
     //boot erase
-    buf_size = boot_erase_data(buf);
+    buf_size = boot_erase_data(buf, boot_end_pos);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
     if (nRequestResult <= 0)
     {
@@ -1096,10 +1976,10 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
 
 }
 
-int DeviceIO_hid_over_i2c::boot_erase_data(unsigned char* buf)
+int DeviceIO_hid_over_i2c::boot_erase_data(unsigned char* buf, int erase_size)
 {
     int size = 0;
-    unsigned int eraseSize = 0x4000 ; // 16KB
+    unsigned int eraseSize = erase_size ; // 16KB
 
     buf[size++] = G2_SUB_0x13_FLASH_ERASE;
     buf[size++] = G2_SUB_0x13_FLASH_BOOT;  //boot
@@ -1186,16 +2066,15 @@ int DeviceIO_hid_over_i2c::FlashErase_data(unsigned char* buf, unsigned int base
 }
 
 
-int DeviceIO_hid_over_i2c::FlashCheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum)
+int DeviceIO_hid_over_i2c::FlashCheckSum_data(unsigned char* buf, unsigned int base_fwstraddress, int file_size, unsigned int fw_checksum)
 {
     int size = 0;
-    unsigned int base_address = 0x08008000;
 
     buf[size++] = G2_SUB_0x13_FLASHCHKSUM;
-    buf[size++]=(base_address>>24)&0xFF;
-    buf[size++]=(base_address>>16)&0xFF;
-    buf[size++]=(base_address>>8)&0xFF;
-    buf[size++]=(base_address)&0xFF;
+    buf[size++]=(base_fwstraddress>>24)&0xFF;
+    buf[size++]=(base_fwstraddress>>16)&0xFF;
+    buf[size++]=(base_fwstraddress>>8)&0xFF;
+    buf[size++]=(base_fwstraddress)&0xFF;
     buf[size++]=(file_size>>24)&0xFF;
     buf[size++]=(file_size>>16)&0xFF;
     buf[size++]=(file_size>>8)&0xFF;
@@ -1395,6 +2274,80 @@ int DeviceIO_hid_over_i2c::FW_Write_CMD(unsigned char* send_buffer, unsigned sho
     return ret;
 }
 
+int DeviceIO_hid_over_i2c::File_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, unsigned char  region)
+{
+    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
+    unsigned char buf[512+9];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
+    int ret = 1;
+    unsigned long i=0,pos=0,sended_len, send_len, len;
+    int retry_ack = 5;
+
+    memset(i2c_buf, 0x00, sizeof(i2c_buf));
+
+    len = send_length+2;
+
+    buf[0] = TOKEN_STX1;
+    buf[1] = TOKEN_STX2;
+    buf[2] = send_cmd;
+    buf[3] = (len>>8)  & 0xFF;
+    buf[4] = len & 0xFF;
+    buf[5] = G2_SUB_0x13_FLASH_WRITE;
+    buf[6] = region;
+
+    for(i=0; i<len-2; i++) {
+        buf[7+i] = send_buffer[i];
+    }
+    buf[5+len] = TOKEN_ETX1;
+    buf[6+len] = TOKEN_ETX2;
+
+    len += 7;
+
+    sended_len = 0;
+    while(sended_len < len)
+    {
+        if(len < HID_OUTPUT_MAX_LEN - 2) send_len = len;
+        else send_len = ((len - sended_len) > (HID_OUTPUT_MAX_LEN - 2))? (HID_OUTPUT_MAX_LEN - 2) : (len - sended_len);
+
+        i2c_buf[0] = HID_OUT_REPORT_ID;
+        i2c_buf[1] = 0x00;
+
+        if(index == 0xAA) index++;
+
+        for(i= 0; i < send_len; i++){
+            i2c_buf[i+2] = buf[pos++];
+        }
+        for(i=send_len; i < (HID_OUTPUT_MAX_LEN);i++){
+            i2c_buf[i+2] = 0;
+        }
+        sended_len += send_len;
+
+        ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
+
+        if(ret == -1)
+        {
+            LOG_G2_I(CLog::getLogOwner(), TAG, "Boot Write error2");
+            return ret;
+        }
+    }
+
+    while(retry_ack >= 0)
+    {
+        retry_ack--;
+        waitRxData(m_fd, uSecWait); //30ms
+        ret = readData(buf, HID_INPUT_MAX_LEN, 0x13, 0x06 );
+
+        if(ret > 2)
+        {
+            break;
+        }
+        usleep(1000 * 500);
+    }
+
+    return ret;
+}
+
+
 int DeviceIO_hid_over_i2c::Boot_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd)
 {
     int uSecWait = GetCmdWaitAckTime(0xb4, 1000);  // 30 msec for Normal command, but some command needs more time
@@ -1481,7 +2434,7 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
     int pos=0;
     int iRet = 0;
 
-    m_pcReadBuf = new unsigned char[size + 1000];
+    m_pcReadBuf = new unsigned char[size + HID_INPUT_MAX_LEN];
 
     iRet = FlashDump(address, size, m_nReadBufCnt, index) ;
 
@@ -1594,6 +2547,35 @@ int DeviceIO_hid_over_i2c::FlashDump(int address, int size, int m_nReadBufCnt, u
 
 }
 
+int DeviceIO_hid_over_i2c::Patition_Request(unsigned char region)
+{
+    int ret = true;
+    int idx = 0;
+
+    unsigned char Buf[HID_OUTPUT_MAX_LEN] = {0,};
+
+    Buf[idx++] = HID_OUT_REPORT_ID;
+    Buf[idx++] = index;
+
+    Buf[idx++] = TOKEN_STX1 ;
+    Buf[idx++] = TOKEN_STX2 ;
+    Buf[idx++] = (unsigned char)0x13 ;
+    Buf[idx++] = (unsigned char)0x00 ;
+    Buf[idx++] = (unsigned char)0x02 ;
+    Buf[idx++] = (unsigned char)G2_SUB_0x13_PARTITION_REQUEST_INFO ;
+
+    Buf[idx++]= region;
+
+    Buf[idx++] = TOKEN_ETX1;
+    Buf[idx++] = TOKEN_ETX2;
+
+    ret = writeData(Buf , HID_OUTPUT_MAX_LEN) ;
+
+    return ret;
+
+}
+
+
 bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
 {
     int bRet = true;
@@ -1632,8 +2614,8 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     {
                         if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
                         {
-                            GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
-                            GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
+                            GetFWStartFullAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
+                            GetFWStartFullErasesize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
                         }
                         LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_GOTOBOOT: ACK");
                         return bRet;
@@ -1649,8 +2631,8 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                     {
                         if((Rx_buf[17] == 0x03) && (Rx_buf[18] == 0xb3))
                         {
-                            GetFWStartAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
-                            GetEraseSize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
+                            GetFWStartFullAddress = (unsigned int)(Rx_buf[9] << 24) + (unsigned int)(Rx_buf[10] << 16) + (unsigned int)(Rx_buf[11] << 8) + (unsigned int)(Rx_buf[12]);
+                            GetFWStartFullErasesize = (unsigned int)(Rx_buf[13] << 24) + (unsigned int)(Rx_buf[14] << 16) + (unsigned int)(Rx_buf[15] << 8) + (unsigned int)(Rx_buf[16]);
                         }
                         LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_FWDOWNREADY: ACK");
                         return bRet;
@@ -1745,11 +2727,16 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
     return bRet;
 }
 
-int DeviceIO_hid_over_i2c::Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr)
+int DeviceIO_hid_over_i2c::Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr, bool GetPartition)
 {
     unsigned int fwstraddr = 0x08008000;
     unsigned int addr = 0;
     addr = (unsigned int)(file_buf[3 + idx] << 24) + (unsigned int)(file_buf[2 + idx] << 16) + (unsigned int)(file_buf[1 + idx] << 8) + (unsigned int)(file_buf[0 + idx]);
+
+    if(GetPartition)
+    {
+        fwstraddr = BaseStartaddr + GetFWStartAddress;
+    }
 
     if(addr != fwstraddr)
     {
@@ -1759,5 +2746,51 @@ int DeviceIO_hid_over_i2c::Get_AppStartAddr_fromBinFile(unsigned char* file_buf,
     *FW_Startaddr = addr;
 
     return 1;
+}
+
+int DeviceIO_hid_over_i2c::BaseBin_start_data(unsigned char* buf, unsigned char region)
+{
+    int size = 0;
+
+    buf[size++] = G2_SUB_0x13_FLASH_START;
+    buf[size++] = region;
+    return size;
+}
+
+
+int DeviceIO_hid_over_i2c::BaseBin_erase_data(unsigned char* buf, unsigned char region)
+{
+    int size = 0;
+
+    buf[size++] = G2_SUB_0x13_FLASH_ERASE;
+    buf[size++] = region;
+    return size;
+}
+
+int DeviceIO_hid_over_i2c::Flash0x09CheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum)
+{
+    int size = 0;
+
+    buf[size++] = G2_SUB_0x13_0x09_FLASH_CHECKSUM;    
+    buf[size++] = BASEBIN_REGION;
+    buf[size++]=(file_size>>24)&0xFF;
+    buf[size++]=(file_size>>16)&0xFF;
+    buf[size++]=(file_size>>8)&0xFF;
+    buf[size++]=(file_size)&0xFF;
+    buf[size++]=(fw_checksum>>24)&0xFF;
+    buf[size++]=(fw_checksum>>16)&0xFF;
+    buf[size++]=(fw_checksum>>8)&0xFF;
+    buf[size++]=(fw_checksum)&0xFF;
+
+    return size;
+}
+
+int DeviceIO_hid_over_i2c::BaseBin_finish(unsigned char* buf, unsigned char region)
+{
+    int size = 0;
+
+    buf[size++] = G2_SUB_0x13_FLASH_FINISH;
+    buf[size++] = region;
+    return size;
 }
 

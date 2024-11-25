@@ -249,47 +249,220 @@ bool CDeviceHandler::CheckFirmwareVersion(int v_format)
     return m_bFWVerReceived;
 }
 
-bool CDeviceHandler::G2Update(unsigned char* file_buf)
+bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
 {
-    int iRet = 0;
+    //int iRet = 1;
     int nBootUpdate_finish = false;
     int nCUUpdate_finish = false;
     int nFWUpdate_finish = false;
+    bool bRequestPartition = false;
+    int bPrechecking = 0;
+    int trynum = 0;
 
-    nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce);
-
-    if(nBootUpdate_finish <= 0)
+    //HW Reset
+    bPrechecking = TxRequestHW_Reset();
+    if (bPrechecking <= 0)
     {
-		m_bBootUpdateforce = true;
-		nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce);
-		if(nBootUpdate_finish <= 0)
-		{
-			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
-			return iRet;
-		}
-	}
-	usleep(500000);
+        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
+        return false;
+    }
+    usleep(150000);
 
-    nCUUpdate_finish = TxRequestCuUpdate(file_buf);
 
-    if(nCUUpdate_finish <= 0)
+    //check Partition Request  
+    if(filesize != 0x20000)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
-        return iRet;
+        bRequestPartition = RequestPartitionInfo(bRequestPartition);
+        if(bRequestPartition == false)        
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file");
+            return false;
+        }
     }
 
-    nFWUpdate_finish = TxRequestFwUpdate(file_buf);
-
-    if(nFWUpdate_finish <= 0)
+    //check prepare condition
+    bPrechecking = Precheckforupdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+    if(bPrechecking < 0)
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
-        return iRet;
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Update Condition Error");
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate Finish");
+
+    //boot update
+    for(trynum = 0; trynum < 3; trynum++)
+    {
+        nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+        if(nBootUpdate_finish <= 0)
+        {
+    		m_bBootUpdateforce = true;
+    		if(trynum == 2)
+    		{
+    			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
+    			return false;
+    		}
+            else
+            {
+                continue;
+            }
+    	}
+        else
+        {
+            break;
+        }
+    }
+	usleep(500000);
+
+/*
+    for(trynum = 0; trynum < 3; trynum++)
+    {
+        if(nBootUpdate_finish == 1) //boot update success
+        {
+            if(cu_ver != 0x0c) 
+            {
+                iRet = TxRequestBASEBINUpdate(file_buf, bRequestPartition);
+            }
+    		if(iRet <= 0)
+    		{
+        		if(trynum == 2)
+        		{
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Update Error");
+                    return false;
+
+        		}
+                else
+                {
+                    continue;
+                }
+    		}
+
+            if((GetLOADBALANCEStartAddress != 0x00) && (cu_ver == 10))
+            {
+                iRet = TxRequestLOADBALANCEUpdate(file_buf, bRequestPartition);
+            }
+    		if(iRet <= 0)
+    		{
+        		if(trynum == 2)
+        		{
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "LoadBalance Update Error");
+                    return false;
+        		}
+                else
+                {
+                    continue;
+                }
+    		}
+        }
+    }
+*/
+    for(trynum = 0; trynum < 3; trynum++)
+    {
+
+        nCUUpdate_finish = TxRequestCuUpdate(file_buf, bRequestPartition);
+        if(nCUUpdate_finish <= 0)
+        {
+    		if(trynum == 2)
+    		{
+                LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
+                return false;
+    		}
+            else
+            {
+                continue;
+            }
+        }
+
+        nFWUpdate_finish = TxRequestFwUpdate(file_buf, bRequestPartition);
+
+        if(nFWUpdate_finish <= 0)
+        {
+    		if(trynum == 2)
+    		{
+                LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
+                return false;
+    		}
+            else
+            {
+                continue;
+            }
+        }
+
+        break;
     }
 
     if(nBootUpdate_finish == 2) //stay in Bootloader When boot updated
     {
+        //boot update
+        for(trynum = 0; trynum < 3; trynum++)
+        {
+            nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+            if(nBootUpdate_finish <= 0)
+            {
+        		m_bBootUpdateforce = true;
+        		if(trynum == 2)
+        		{
+        			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
+        			return false;
+        		}
+                else
+                {
+                    continue;
+                }
+        	}
+            else
+            {
+                break;
+            }
+        }    
         usleep(1500000);
-        nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce);
+/*        
+        for(trynum = 0; trynum < 3; trynum++)
+        {
+            if(nBootUpdate_finish == 1) //boot update success
+            {
+                if(cu_ver != 0x0c) 
+                {
+                    iRet = TxRequestBASEBINUpdate(file_buf, bRequestPartition);
+                }
+        		if(iRet <= 0)
+        		{
+            		if(trynum == 2)
+            		{
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Update Error");
+                        return false;
+
+            		}
+                    else
+                    {
+                        continue;
+                    }
+        		}
+
+                if((GetLOADBALANCEStartAddress != 0x00) && (cu_ver == 12))
+                {
+                    iRet = TxRequestLOADBALANCEUpdate(file_buf, bRequestPartition);
+                }
+        		if(iRet <= 0)
+        		{
+            		if(trynum == 2)
+            		{
+                        LOG_G2_E(CLog::getLogOwner(), TAG, "LoadBalance Update Error");
+                        return false;
+            		}
+                    else
+                    {
+                        continue;
+                    }
+        		}        
+            }
+            else
+            {
+    			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate try fail");
+    			return false;
+            }
+        }        
+*/        
         TxRequestSystem_Reset();
     }
 
@@ -299,9 +472,15 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf)
 
     if(m_sFwVersion == "")
     {
-        LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+        usleep(500000);    
+        m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+        if(m_sFwVersion == "")
+        {
+            LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+        }
     }
-    else
+
+    if(!(m_sFwVersion == ""))
     {
         if(m_bVerHex)
         {

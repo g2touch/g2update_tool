@@ -13,6 +13,9 @@ using namespace ARG;
 /* size */
 #define _64K            0x10000
 #define _128K           0x20000
+#define _256K           0x40000
+#define _512K           0x80000
+
 #define _4K             0x1000
 #define _8K             0x2000
 #define _12K            0x3000
@@ -32,7 +35,7 @@ namespace G2
                 bool openDevice();
                 bool IsDeviceOpened();
                 bool CheckFirmwareVersion(int v_format);
-                bool G2Update(unsigned char* file_buf);
+                bool G2Update(unsigned char* file_buf, int filesize);
                 unsigned short getPID();
 
                 bool m_bBootUpdateforce;
