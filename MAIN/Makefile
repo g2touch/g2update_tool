@@ -7,7 +7,7 @@ CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE
 LDFLAGS  ?=
 CFLAGS   += -g -Wall -pthread
 CXXFLAGS += -g -Wall -pthread -Weffc++
-DEFINES  = -DAPP_VERSION=\"1.2.5893\" $(USER_DEFINE)
+DEFINES  = -DAPP_VERSION=\"1.2.5894\" $(USER_DEFINE)
 INCPATH  = -I. -I../G2ArgHandle -I../G2DeviceHandle -I../G2Procedure -I../Log
 
 ###############################################################################
