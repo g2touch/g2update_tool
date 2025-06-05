@@ -721,19 +721,24 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
             string strVersion = "";
             int cnt = 0;
             if(format == 0)
+            {
                 cnt = snprintf(temp, 16, "%02d.%02d.%05d", buf[10], buf[11], (buf[12] * 256 + buf[13]));
+            }
             else
+            {
                 cnt = snprintf(temp, 16, "%02X.%02X.%04X", buf[10], buf[11], (buf[12] * 256 + buf[13]));
-    		if (cnt >= 0 && cnt < 100)
-    		{
-    			strVersion = string(temp, cnt);
-    		}
-    		else
-    		{
-    			LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot change FW Version packet to string");
-    		}
+            }
+            
+            if (cnt >= 0 && cnt < 100)
+            {
+                strVersion = string(temp, cnt);
+            }
+            else
+            {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot change FW Version packet to string");
+            }
 
-    		return strVersion;
+            return strVersion;
     	}
 
     }
