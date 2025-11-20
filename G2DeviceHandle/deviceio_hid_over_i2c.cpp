@@ -88,7 +88,6 @@
 #define CU_START_POS 0x4000
 #define BOOT_VER_POS 0x400
 #define BOOT_FILE_SIZE 0x4000
-#define BOOT_VIDPID_POS 0x440
 
 #define CU_FILE_SIZE 0xb00
 #define CU9_FILE_SIZE 0xbC0
@@ -121,7 +120,9 @@
 #define MCHIP_VID    0x04D8
 #define INFINION_VID 0x04B4
 
+#define STM_L432_PID      0x01B0
 #define STM_U535_PID      0x0217
+#define STM_U375_PID      0x0177 
 
 #define G2_FLASH_REGION_ALL 0xAA
 #define G2_SUB_0x13_PARTITION_REQUEST_INFO 0x00
@@ -144,14 +145,14 @@ using namespace G2::DeviceIO;
 
 #define TAG "deviceio_hid_over_i2c"
 
-DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler) :
+DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler):
     m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
     index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0), 
 	m_bOpened(false),GetFWStartFullAddress(0),GetFWStartFullErasesize(0), GetFWStartAddress(0), GetFWEraseSize(0),GetBootStartAddress(0),GetBootEraseSize(0),
 	GetCUStartAddress(0), GetCUEraseSize(0), GetLOADBALANCEStartAddress(0), GetLOADBALANCEEraseSize(0),
 	GetURStartAddress(0), GetUREraseSize(0), GetURDStartAddress(0), GetURDEraseSize(0), GetMTStartAddress(0), GetMTEraseSize(0),
     GetFTStartAddress(0), GetFTEraseSize(0), GetBASEBINStartAddress(0), GetBASEBINEraseSize(0), MCUPID(0), MCUVID(0),
-    BaseStartaddr(0), Protocol_Ver(0), cu_ver(0)
+    BaseStartaddr(0), Protocol_Ver(0), Bootloaderpos(0), FwFeaturepos(0), Partitionpos(0), CU_size_from_FileVirgincode(0), cu_ver(0), Interface_Info(-1),m_Partition_NotMatched(false)
 {
     /* malloc out_buffer, in_buffer */
     out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
@@ -729,16 +730,16 @@ string DeviceIO_hid_over_i2c::TxRequestFwVer(int mSec, int format=0)
                 cnt = snprintf(temp, 16, "%02X.%02X.%04X", buf[10], buf[11], (buf[12] * 256 + buf[13]));
             }
             
-            if (cnt >= 0 && cnt < 100)
-            {
-                strVersion = string(temp, cnt);
-            }
-            else
-            {
-                LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot change FW Version packet to string");
-            }
+    		if (cnt >= 0 && cnt < 100)
+    		{
+    			strVersion = string(temp, cnt);
+    		}
+    		else
+    		{
+    			LOG_G2_E(CLog::getLogOwner(), TAG, "Cannot change FW Version packet to string");
+    		}
 
-            return strVersion;
+    		return strVersion;
     	}
 
     }
@@ -912,75 +913,27 @@ int DeviceIO_hid_over_i2c::TxRequestLOADBALANCEUpdate(unsigned char* file_buf)
 }
 */
 
-// Try 3 times
-int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPartition)
+
+
+int DeviceIO_hid_over_i2c::HWReset()
 {
-    unsigned char send_buffer[256]={0,};
-    unsigned char dump_buffer[0x1000]={0,};
-    unsigned short send_length = 0x40;
-    int pos = CU_START_POS;
-    int custrpos_File = CU_START_POS;
-    int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
-    unsigned char buf[64];
-    int buf_size = 0;
-    int cu_page = 0x320;
-    int cu_page_count = 0;
     int nRequestResult = TxRequestHW_Reset();
-    int retry = 0;
-    unsigned int FWStartAddress = 0;
-    unsigned int CUStartAddress = 0x08004000;    
-
-    LOG_G2_D(CLog::getLogOwner(), TAG, "BaseStartaddr 0x%x, GetFWStartAddress 0x%x",BaseStartaddr, GetFWStartAddress);    
-    
-    if(bPartition == true)
-    {    
-        FWStartAddress = BaseStartaddr + GetFWStartAddress;
-        CUStartAddress = BaseStartaddr + GetCUStartAddress;
-        pos = GetCUStartAddress;
-        cuend_pos = GetCUStartAddress + GetCUEraseSize;
-        custrpos_File = GetCUStartAddress;
-
-        if (file_buf[pos] == 0x07)
-            cuend_pos = GetCUStartAddress+ 0x630;
-        else if (file_buf[pos] == 0x09) 
-            cuend_pos = GetCUStartAddress + CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x09) 
-            cuend_pos = GetCUStartAddress + CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x0A) 
-            cuend_pos = GetCUStartAddress+ CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x0B) 
-            cuend_pos = GetCUStartAddress + 0x930;
-        else if (file_buf[pos] == 0x0C) 
-            cuend_pos = GetCUStartAddress + CU12_FILE_SIZE;           
-    }
-    else
-    {
-        FWStartAddress = 0x08008000;
-
-        if (file_buf[pos] == 0x07)
-            cuend_pos = CU_START_POS+ 0x630;
-        else if (file_buf[pos] == 0x09) 
-            cuend_pos = CU_START_POS + CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x09) 
-            cuend_pos = CU_START_POS + CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x0A) 
-            cuend_pos = CU_START_POS+ CU9_FILE_SIZE;
-        else if (file_buf[pos] == 0x0B) 
-            cuend_pos = CU_START_POS + 0x930;
-        else if (file_buf[pos] == 0x0C) 
-            cuend_pos = CU_START_POS + CU12_FILE_SIZE;        
-    }
-
-    cu_page_count = ((cuend_pos - pos) % send_length == 0) ? ((cuend_pos - pos) / send_length) : (((cuend_pos - pos) / send_length) + 1);
-    LOG_G2_D(CLog::getLogOwner(), TAG, "cu_page_count 0x%x",cu_page_count);
-
-    
     if (nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
         return nRequestResult;
     }
-    usleep(150000);
+    usleep(150000);    
+
+    return nRequestResult;
+
+}
+
+int DeviceIO_hid_over_i2c::GoToBoot()
+{
+    int nRequestResult = 1;
+    int buf_size = 0;
+    unsigned char buf[64] = {0,};    
 
     buf_size = GotoBoot_data(buf);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 1000);
@@ -991,6 +944,113 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPart
         return nRequestResult;
     }
     usleep(300000);
+
+    return nRequestResult;
+
+}
+
+
+
+// Try 3 times
+int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPartition)
+{
+    unsigned char send_buffer[256]={0,};
+    unsigned char dump_buffer[0x1000]={0,};
+    unsigned short send_length = 0x40;
+    int pos = CU_START_POS;
+    int custrpos_File = CU_START_POS;
+    int cuend_pos = (CU_START_POS + CU_FILE_SIZE);
+    unsigned char buf[64] = {0,};    
+    int buf_size = 0;
+    int cu_page = 0x320;
+    int cu_page_count = 0;
+    int nRequestResult = 0x00;
+    int retry = 0;
+    unsigned int FWStartAddress = 0;
+    unsigned int CUStartAddress = 0x08004000;    
+    
+    if(bPartition == true)
+    {    
+        FWStartAddress = BaseStartaddr + GetFWStartAddress;
+        CUStartAddress = BaseStartaddr + GetCUStartAddress;
+        pos = GetCUStartAddress;
+        cuend_pos = GetCUStartAddress + GetCUEraseSize;
+        custrpos_File = GetCUStartAddress;
+
+        if(CU_size_from_FileVirgincode <= 0xFFFF)
+        {
+            cuend_pos = GetCUStartAddress + CU_size_from_FileVirgincode;
+        }
+        else
+        {
+            if (file_buf[pos] == 0x07)
+            {
+                cuend_pos = GetCUStartAddress+ 0x630;
+            }
+            else if (file_buf[pos] == 0x09) 
+            {
+                cuend_pos = GetCUStartAddress + CU9_FILE_SIZE;
+            }
+            else if (file_buf[pos] == 0x0A) 
+            {
+                cuend_pos = GetCUStartAddress+ CU9_FILE_SIZE;
+            }
+            else if (file_buf[pos] == 0x0B) 
+            {
+                cuend_pos = GetCUStartAddress + 0x930;
+            }
+            else if (file_buf[pos] == 0x0C) 
+            {
+                cuend_pos = GetCUStartAddress + CU12_FILE_SIZE;
+            }
+            else
+            {
+                cuend_pos = GetCUStartAddress + CU_FILE_SIZE;
+            }
+        }
+    }
+    else
+    {
+        FWStartAddress = 0x08008000;
+
+        if(CU_size_from_FileVirgincode <= 0xFFFF)
+        {
+            cuend_pos = CU_START_POS + CU_size_from_FileVirgincode;
+        }
+        else
+        {        
+            if (file_buf[pos] == 0x07)
+            {
+                cuend_pos = CU_START_POS+ 0x630;
+            }
+            else if (file_buf[pos] == 0x09) 
+            {
+                cuend_pos = CU_START_POS + CU9_FILE_SIZE;
+            }
+            else if (file_buf[pos] == 0x0A) 
+            {
+                cuend_pos = CU_START_POS+ CU9_FILE_SIZE;
+            }
+            else if (file_buf[pos] == 0x0B) 
+            {
+                cuend_pos = CU_START_POS + 0x930;
+            }
+            else if (file_buf[pos] == 0x0C) 
+            {
+                cuend_pos = CU_START_POS + CU12_FILE_SIZE;
+            }
+            else //cu2
+            {
+                cuend_pos = CU_START_POS + CU_FILE_SIZE;
+            }
+        }
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "CUStartAddress 0x%x, GetCUStartAddress 0x%x",CUStartAddress, GetCUStartAddress);    
+    LOG_G2_D(CLog::getLogOwner(), TAG, "cuend_pos 0x%x, pos 0x%x",cuend_pos, pos);
+
+    cu_page_count = ((cuend_pos - pos) % send_length == 0) ? ((cuend_pos - pos) / send_length) : (((cuend_pos - pos) / send_length) + 1);
+    LOG_G2_D(CLog::getLogOwner(), TAG, "cu_page_count 0x%x",cu_page_count);
 
     if(bPartition == true)
     {
@@ -1004,14 +1064,11 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPart
 
     buf_size = FWDownReady_data(buf, FWStartAddress);
     nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, buf_size, CMD_F1_RETRY_MAX, 4000);
-
     if (nRequestResult <= 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FWDownReady");
         return nRequestResult;
     }
-
-    LOG_G2_E(CLog::getLogOwner(), TAG, "CMD_FWDownReady OK");    
 
     while(retry < CMD_F1_RETRY_MAX)
     {
@@ -1038,7 +1095,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPart
     //CU WRITE
     while(pos < cuend_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "CU send_pos : %X, size : %X", pos, cuend_pos);
+        LOG_G2_I( CLog::getLogOwner(), TAG, "CU send_pos : %X, size : %X", pos, cuend_pos);
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
         nRequestResult = CU_Write_CMD(send_buffer, send_length, CMD_CU_WRITE, cu_page);
 
@@ -1056,7 +1113,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPart
     pos = 0;
     while(pos < (cu_page_count * send_length))
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump send_pos : %X, end_pos : %X", pos, (cu_page_count * send_length));    
+        LOG_G2_I( CLog::getLogOwner(), TAG, "CU dump send_pos : %X, end_pos : %X", pos, (cu_page_count * send_length));    
         nRequestResult = Dump(dump_buffer+pos, CUStartAddress+pos, DUMP_SIZE);
 
         if(nRequestResult <= 0)
@@ -1068,8 +1125,7 @@ int DeviceIO_hid_over_i2c::TxRequestCuUpdate(unsigned char* file_buf, bool bPart
         pos+=DUMP_SIZE;
     }    
 
-    LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump addr : %X, size : %X", CUStartAddress, (cu_page_count * send_length));    
-
+    LOG_G2_D( CLog::getLogOwner(), TAG, "CU dump addr : %X, size : %X", CUStartAddress, (cu_page_count * send_length));
     nRequestResult = dumpTofile_compare(dump_buffer, file_buf+custrpos_File, (cu_page_count * send_length));
     if(nRequestResult == 1)
     {
@@ -1103,11 +1159,6 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf, bool bPart
     unsigned int fw_metadata_pos = ADDRESS_META_DATA_IN_APP;
     unsigned short addr_idx = 0;
 
-    if((MCUVID == MCHIP_VID) || ((MCUVID == STM_VID) && (MCUPID == STM_U535_PID)))
-    {
-        fw_metadata_pos = ADDRESS_META_DATA_IN_MCHIP_U535;
-    }
-
     if(bPartition == true)
     {
         pos = GetFWStartAddress;
@@ -1115,7 +1166,7 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf, bool bPart
         base_fwstraddress = GetFWStartAddress + BaseStartaddr;
         fw_size = Fw_write_size(file_buf, (GetFWStartAddress + GetFWEraseSize - 0x10));
         fw_end_pos = (GetFWStartAddress + fw_size);
-        addr_idx = GetFWStartAddress + fw_metadata_pos;
+        addr_idx = FwFeaturepos;
     }
     else
     {
@@ -1138,7 +1189,8 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf, bool bPart
         LOG_G2_E(CLog::getLogOwner(), TAG, "ERROR : FW File hasn't Address!!!");
         return nRequestResult;
     }
-
+    
+    LOG_G2_D( CLog::getLogOwner(), TAG, "base_fwstraddress : %X, GetFWEraseSize : %X", base_fwstraddress, GetFWEraseSize);
 
     //FwDownReady
     buf_size = FWDownReady_data(buf, base_fwstraddress);
@@ -1163,7 +1215,7 @@ int DeviceIO_hid_over_i2c::TxRequestFwUpdate(unsigned char* file_buf, bool bPart
     //FLASHWRITE
     while(pos < fw_end_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "FW send_pos : %X, size : %X", pos, fw_end_pos);
+        LOG_G2_I( CLog::getLogOwner(), TAG, "FW send_pos : %X, size : %X", pos, fw_end_pos);
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
         nRequestResult = FW_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
 
@@ -1283,80 +1335,123 @@ int DeviceIO_hid_over_i2c::TxRequestSystem_Reset()
     return nRequestResult;
 }
 
-unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx)
+unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx, bool getPartition)
 {
-    LOG_G2_I(CLog::getLogOwner(), TAG, "MCUType_Verify START");
 
     unsigned char temp[4]={0,};
     unsigned char dump_buffer[0x1000]={0,};
-    int iRet = 1;
     int a = 0;
     int bootver_straddress = 0x08000000;
+    int iRet = 0;
 
     //check mcu type in file
-    MCUVID = 0;
-    MCUPID = 0;
     temp[0] = file_buf[filebuf_idx];
     temp[1] = file_buf[filebuf_idx + 1];
     temp[2] = file_buf[filebuf_idx + 2];
     temp[3] = file_buf[filebuf_idx + 3];
 
+    if(Interface_Info == -1) //MCUVID PID info is FileInfo
+    {
+        MCUVID = (unsigned short)((file_buf[filebuf_bootidx + 1] << 8) + file_buf[filebuf_bootidx]);
+        MCUPID = (unsigned short)((file_buf[filebuf_bootidx + 3] << 8) + file_buf[filebuf_bootidx + 2]);    
+    }
 
     //check repeat
     for (a = 1; a < 4; a++)
     {
         if (temp[0] != file_buf[filebuf_idx + (a * 4)] || temp[1] != file_buf[filebuf_idx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_idx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_idx + (a * 4 + 3)])
         {
-            MCUVID = STM_VID;
-            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);
-            return MCUPID;// No MCU Type repeat pattern found. regard as old STM FW
+            if(Interface_Info == -1)
+            {
+                MCUVID = STM_VID;
+                MCUPID = STM_L432_PID; // No MCU Type repeat pattern found. regard as old STM FW
+            }
+            else
+            {
+          
+                return 0xFF;// error
+            }
         }
     }
 
-    //check repeat with boot
-    for (a = 0; a < 4; a++)
-    {
-        if (temp[0] != file_buf[filebuf_bootidx + (a * 4)] || temp[1] != file_buf[filebuf_bootidx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_bootidx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_bootidx + (a * 4 + 3)])
+    if(Interface_Info == -1) //MCUVID PID info is FileInfo
+    {    
+        //refer file
+
+        if(BaseStartaddr != 0x00)
         {
-            MCUVID = STM_VID;
-            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);
-            return MCUPID;// No MCU Type repeat pattern found. regard as old STM FW
+            bootver_straddress = BaseStartaddr;
         }
-    }    
+        
+        LOG_G2_D(CLog::getLogOwner(), TAG, "MCU Type Dump address 0x%x",(bootver_straddress + Bootloaderpos + OFFSET_MCU_TYPE_IN_META_DATA));
+        iRet= Dump(dump_buffer, (bootver_straddress + Bootloaderpos + OFFSET_MCU_TYPE_IN_META_DATA), 0x10);    
+        if(iRet <= 0)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "MCU Type Dump Fail");
+            return 0xFF; 
+        }
 
-    //refer file
+        //check dump mcu type in file
+        temp[0] = dump_buffer[0];
+        temp[1] = dump_buffer[1];
+        temp[2] = dump_buffer[2];
+        temp[3] = dump_buffer[3];
 
-    bootver_straddress = BaseStartaddr;
-    iRet= Dump(dump_buffer, bootver_straddress + BOOT_VIDPID_POS, 0x10);    
-    if(iRet <= 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "MCU Type Dump Fail");
-        return iRet; //boot_ver same
-    }
-
-
-    for(int i=0; i<16; i+=4)
-    {
+        //check repeat
+        for (a = 1; a < 4; a++)
+        {
+            if (temp[0] != dump_buffer[(a * 4)] || temp[1] != dump_buffer[(a * 4 + 1)] || temp[2] != dump_buffer[(a * 4 + 2)] || temp[3] != dump_buffer[(a * 4 + 3)])
+            {
+                if((MCUVID == STM_VID) && (MCUPID == STM_L432_PID))
+                {
+                    return 0;
+                }
+                else
+                {
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "VID PID Error");                
+                    return 0xFF;// error
+                }
+            }
+        }
+        
         iRet = dumpTofile_compare(dump_buffer, file_buf+filebuf_idx, 0x10);
+
+
+        
         if(iRet == 0) //non matched
         {
-            //STM L432
-            MCUVID = STM_VID;
-            MCUPID = 0x00;
-            BaseStartaddr = 0x08000000;
-            LOG_G2_D(CLog::getLogOwner(), TAG, "MCUPID 0x%x",MCUVID);            
-            return MCUPID;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched FILE MCUVID 0x%x, FILE MCUPID 0x%x",MCUVID, MCUPID);
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched Target MCUVID 0x%x, Target MCUPID 0x%x",(short)((dump_buffer[1] << 8) + dump_buffer[0]), (short)((dump_buffer[3] << 8) + dump_buffer[2]));
+
+            if((MCUVID == GD_VID) && (MCUPID == 0x00 || (short)((dump_buffer[3] << 8) + dump_buffer[2]) == 0x00))
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "GD MCU OLD FW");
+            }
+            else
+            {
+                return 0xFF;
+            }
+           
+        }        
+    }
+    else //MCUVID PID info is TargetInfo
+    {
+        if((MCUVID  != ((unsigned short)((file_buf[filebuf_bootidx + 1] << 8) + file_buf[filebuf_bootidx]))) ||
+          (MCUPID  != ((unsigned short)((file_buf[filebuf_bootidx + 3] << 8) + file_buf[filebuf_bootidx + 2]))))
+        {
+            return 0xFF; //error
         }
     }
 
-    MCUVID = (unsigned short)((file_buf[BOOT_VIDPID_POS + 1] << 8) + file_buf[BOOT_VIDPID_POS]);
-    MCUPID = (unsigned short)((file_buf[BOOT_VIDPID_POS + 3] << 8) + file_buf[BOOT_VIDPID_POS + 2]);
-    
-    SET_basestraddr(MCUVID); //set basestartaddr again
+    if(getPartition == false)
+    {    
+        SET_basestraddr(MCUVID); //set basestartaddr again
+    }
     LOG_G2_D(CLog::getLogOwner(), TAG, "MCUVID 0x%x, MCUPID 0x%x",MCUVID, MCUPID);
 
     return MCUPID;
 }
+
 
 void DeviceIO_hid_over_i2c::SET_basestraddr(unsigned short vid_temp)
 {
@@ -1388,14 +1483,19 @@ int DeviceIO_hid_over_i2c::checkFW_CUVirginCode(unsigned char* file_buf, int fws
     unsigned int fwstraddr = 0x08008000;
 
     if(GetFWStartAddress != 0x00)
+    {
         fwstraddr = BaseStartaddr + GetFWStartAddress;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "fwstraddr 0x%x, fwstraddr_pos 0x%x", fwstraddr, fwstraddr_pos);
+    
 
     //fw address
     for(i=0; i<13; i+=4)
     {
         if((file_buf[fwstraddr_pos+i+3] == (unsigned char)((fwstraddr >> 24)&0xff)) && (file_buf[fwstraddr_pos+i+2] ==(unsigned char)((fwstraddr >> 16)&0xff)) && (file_buf[fwstraddr_pos+i+1] == (unsigned char)((fwstraddr >> 8)&0xff)) && (file_buf[fwstraddr_pos+i] == (unsigned char)((fwstraddr)&0xff)))
-        {
-
+        {            
+            LOG_G2_I(CLog::getLogOwner(), TAG, "binfile fw address match !!!!!!!!");
         }
         else
         {
@@ -1436,8 +1536,10 @@ int DeviceIO_hid_over_i2c::checkFW_CUVirginCode(unsigned char* file_buf, int fws
     cu_end_size+= (file_buf[cuvirginaddr + 13] <<8);
     cu_end_size+= file_buf[cuvirginaddr + 12];
 
-    if(cu_end_size == 0xFFFFFFFF) //don't have size
+    if(cu_end_size > 0xFFFF) //don't have size
     {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "cu end size not include in file!!");
+    
         if ((cu_ver == 0x02) || (cu_ver == 0x03))
         {            
             cu_end_addr = custraddr + CU_FILE_SIZE;
@@ -1473,6 +1575,10 @@ int DeviceIO_hid_over_i2c::checkFW_CUVirginCode(unsigned char* file_buf, int fws
         LOG_G2_E(CLog::getLogOwner(), TAG, "binfile cu checksum error !!!!!!!! 0x%x, 0x%x", cu_checksum, cu_checksum_cmp);
         return -1;
     }
+    else
+    {
+        CU_size_from_FileVirgincode = (cu_end_addr - custraddr);
+    }
 
 
     return 0;
@@ -1484,44 +1590,44 @@ int DeviceIO_hid_over_i2c::Precheckforupdate(unsigned char* file_buf, bool bBoot
 {
     LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate START");
     int nRequestResult = 0;
-    unsigned int partition_address = PARTITION_ADDR;
-    int fwstraddr_pos = 0x200;
+    unsigned int partition_address = 0;
+    int fwstraddr_pos = FwFeaturepos;
+
+    if(getPartition == 1)
+    {
+        partition_address = (Bootloaderpos + Partitionpos);
+    }
+    else
+    {
+        partition_address = PARTITION_ADDR;
+    }
+    LOG_G2_D(CLog::getLogOwner(), TAG, "getPartition %d",getPartition);    
+
+    nRequestResult = DumpFileInfo(file_buf, partition_address);
+    if(nRequestResult == -1)
+    {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Partition Table Not matched... Update using File information ");
+        m_Partition_NotMatched = true;
+    }
 
     //check VID PID
-    nRequestResult = check_VID_PID(file_buf);
+    nRequestResult = check_VID_PID(file_buf, getPartition);
     if(nRequestResult < 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "VID & PID Not matched");
         return nRequestResult;
     }
 
-    LOG_G2_E(CLog::getLogOwner(), TAG, "VID & PID Matched");
+    LOG_G2_D(CLog::getLogOwner(), TAG, "VID & PID Matched");
 
-    if(MCUVID == MCHIP_VID)
-        partition_address = PARTITION_ADDR_MCHIP;
-
-    if((MCUVID == MCHIP_VID) || ((MCUVID == STM_VID) && (MCUPID == STM_U535_PID)))
-    {
-        fwstraddr_pos = 0x300;
-    }
-
-    nRequestResult = DumpFileInfo(file_buf, partition_address);
-    if(nRequestResult < 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "Partition Table Not matched");
-        return nRequestResult;
-    }    
-
-    //SetStartAddress
-    LOG_G2_D(CLog::getLogOwner(), TAG, "getPartition %d",getPartition);
     if(getPartition == true)
     {
         //check cu version
         cu_ver = file_buf[GetCUStartAddress];
 
-        LOG_G2_D(CLog::getLogOwner(), TAG, "GetCUStartAddress 0x%x, GetCUEraseSize 0x%x",GetCUStartAddress, GetCUEraseSize);        
-    
-        nRequestResult = checkFW_CUVirginCode(file_buf, (GetFWStartAddress + fwstraddr_pos), (GetFWStartAddress + GetFWEraseSize - 0x10), GetCUStartAddress ,(GetCUStartAddress + GetCUEraseSize - 0x10));
+        LOG_G2_D(CLog::getLogOwner(), TAG, "GetFWStartAddress 0x%x, GetFWEraseSize 0x%x", GetFWStartAddress, GetFWEraseSize);
+        
+        nRequestResult = checkFW_CUVirginCode(file_buf, fwstraddr_pos, (GetFWStartAddress + GetFWEraseSize - 0x10), GetCUStartAddress ,(GetCUStartAddress + GetCUEraseSize - 0x10));
         if(nRequestResult < 0)
         {
             LOG_G2_E(CLog::getLogOwner(), TAG, "CU VirginCode Not matched");
@@ -1530,6 +1636,14 @@ int DeviceIO_hid_over_i2c::Precheckforupdate(unsigned char* file_buf, bool bBoot
     }
     else
     {
+        if(MCUVID == MCHIP_VID)
+            partition_address = PARTITION_ADDR_MCHIP;
+
+        if((MCUVID == MCHIP_VID) || ((MCUVID == STM_VID) && (MCUPID == STM_U535_PID)) || ((MCUVID == STM_VID) && (MCUPID == STM_U375_PID)))
+        {
+            fwstraddr_pos = 0x300;
+        }
+
         cu_ver = file_buf[CU_START_POS];
         
         nRequestResult = checkFW_CUVirginCode(file_buf,GD_STML432_FWSTRADDRR_POS, GD_STML432_FWVIRGIN_CODE_POS, CU_START_POS, STML432_VIRGIN_CODE_POS);
@@ -1541,34 +1655,32 @@ int DeviceIO_hid_over_i2c::Precheckforupdate(unsigned char* file_buf, bool bBoot
                 LOG_G2_E(CLog::getLogOwner(), TAG, "CU VirginCode Not matched");
                 return nRequestResult;
             }
-        }
+        }        
     }
     
-
     return nRequestResult; //
 
 }
 
-int DeviceIO_hid_over_i2c::check_VID_PID(unsigned char* file_buf)
+int DeviceIO_hid_over_i2c::check_VID_PID(unsigned char* file_buf, bool getPartition)
 {
 
-    int filebuf_idx = (GetFWStartAddress + ADDRESS_META_DATA_IN_APP + OFFSET_MCU_TYPE_IN_META_DATA);
-    int filebuf_bootidx = (GetBootStartAddress + ADDRESS_META_DATA_IN_BOOT + OFFSET_MCU_TYPE_IN_META_DATA);    
+    int filebuf_idx = (FwFeaturepos + OFFSET_MCU_TYPE_IN_META_DATA);
+    int filebuf_bootidx = (Bootloaderpos + OFFSET_MCU_TYPE_IN_META_DATA);
     unsigned short PID = 0;
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "Check_VID_PID START");
 
-    PID = MCUType_Verify(file_buf, filebuf_idx, filebuf_bootidx);    
-    if(PID == 0)
+    PID = MCUType_Verify(file_buf, filebuf_idx, filebuf_bootidx, getPartition);    
+    if(PID == 0xff)
     {
-        PID = MCUType_Verify(file_buf, filebuf_idx + 0x100, filebuf_bootidx); // research again 0x340 for Microchip & STM U535
-        LOG_G2_D(CLog::getLogOwner(), TAG, "PID 0x%x",PID);
-        
-        if(PID == 0)
-        {
-            MCUVID = STM_VID;
-            BaseStartaddr = 0x08000000;
-        }
+        return -1;
+    }    
+    else if(PID == 0)
+    {
+        MCUPID = STM_L432_PID;
+        MCUVID = STM_VID;
+        BaseStartaddr = 0x08000000;
     }
 
     return PID;
@@ -1585,8 +1697,25 @@ bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
     int size = HID_INPUT_MAX_LEN;    
     int pos = 0;
     int iRet = 0;
+    int a = 0;
+    int id0 = 0; 
+    int id1 = 0; 
+    int id2 = 0;
+    unsigned char str_ver = 0;
+    unsigned char cnt_record = 0;
+    unsigned char checksum = 0;
+    int partition_offset = 0;
+    int nTry = 0;    
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "RequestPartitionInfo Start");
+
+    //read
+    while(size != 0 && nTry++ < 20)
+    {
+        waitRxData(m_fd, uSecWait);
+        size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
+    }
+    size = HID_INPUT_MAX_LEN;
 
     //send partition request
     iRet =  Patition_Request(G2_FLASH_REGION_ALL);
@@ -1603,6 +1732,7 @@ bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
         iRet = readData(m_pcReadBuf, HID_INPUT_MAX_LEN, CMD_MAIN_CMD, G2_SUB_0x13_PARTITION_REQUEST_INFO); //dump
 
         LOG_G2_D(CLog::getLogOwner(), TAG, "iRet %d",iRet);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "m_pcReadBuf 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x,",m_pcReadBuf[4], m_pcReadBuf[5], m_pcReadBuf[6], m_pcReadBuf[7], m_pcReadBuf[8], m_pcReadBuf[9]);
         if( read_retry == 0)
         {
             return bRet ;
@@ -1632,7 +1762,7 @@ bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
             pos+=(iRet-8);
             size = ((unsigned int)m_pcReadBuf[5] << 8) + (unsigned int)m_pcReadBuf[6];
 
-            LOG_G2_D(CLog::getLogOwner(), TAG, "packet_length: %x", packet_length);
+            //LOG_G2_D(CLog::getLogOwner(), TAG, "packet_length: %x", packet_length);
         }
         else
         {
@@ -1647,20 +1777,58 @@ bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
             }
             pos+=(iRet-2);
             
-            LOG_G2_D(CLog::getLogOwner(), TAG, "pos: %x, size: %x", pos, size);
+            //LOG_G2_D(CLog::getLogOwner(), TAG, "pos: %x, size: %x", pos, size);
         }
 
         LOG_G2_I(CLog::getLogOwner(), TAG, "remain packet_length : %x",packet_length);
 
     }
 
-    //Input partition
+    //InBuffer partition
     if (data_buffer[1] == 0x00)
     {
         if (data_buffer[0] == 0xaa)
         {
-            BaseStartaddr = (unsigned int)((data_buffer[8] << 24) + (data_buffer[7] << 16) + (data_buffer[6] << 8) + (data_buffer[5] << 0)); //little endian
-            Protocol_Ver = (short)((data_buffer[14] * 256) + data_buffer[13]); //little endian
+        
+            id0 = data_buffer[2];
+            id1 = data_buffer[10];
+            id2 = data_buffer[18];
+
+            if((id0 == 0x00) && (data_buffer[4] == 0xEA))
+            {
+                for (a = 2; a < 9; a++)
+                {
+                    checksum += data_buffer[a];
+                }
+                if (checksum != data_buffer[9])
+                {
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "Partition data error0\n");
+                    return false;
+                }
+                
+                str_ver = data_buffer[3];
+                BaseStartaddr = (unsigned int)((data_buffer[8] << 24) + (data_buffer[7] << 16) + (data_buffer[6] << 8) + (data_buffer[5] << 0)); //little endian
+
+                checksum = 0;
+            }
+
+            if((id1 == 0x01) && (data_buffer[12] == 0xEA))
+            {
+                for (a = 10; a < 17; a++)
+                {
+                    checksum += data_buffer[a];
+                }
+                if (checksum != data_buffer[17])            
+                {
+                    LOG_G2_D(CLog::getLogOwner(), TAG, "Partition data error1\n");
+                    return false;
+                }
+
+                checksum = 0;
+                cnt_record = data_buffer[11];            
+                Protocol_Ver = (short)((data_buffer[14] * 256) + data_buffer[13]); //little endian
+            }
+
 
             LOG_G2_D(CLog::getLogOwner(), TAG, "BaseStartaddr : 0x%x, Protocol Ver 0x%x",BaseStartaddr,Protocol_Ver);
             if (data_buffer[3] < 0x10)
@@ -1670,22 +1838,39 @@ bool DeviceIO_hid_over_i2c::RequestPartitionInfo(bool bFileInfo)
             }
             else
             {
-                unsigned char cnt_record = data_buffer[11];
-                LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Protocol Version : %x",cnt_record);
 
+                if((id2 == 0x02) && (data_buffer[20] == 0xEA) && (str_ver >  0x10))
+                {
+                    for (a = 18; a < 25; a++)
+                    {
+                        checksum += data_buffer[a];
+                    }
+                    if (checksum == data_buffer[25])
+                    {
+
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "Partition table ID2 exist\n");
+
+                        partition_offset = 8;
+                        Interface_Info = data_buffer[19];
+                        MCUVID = (unsigned short)((data_buffer[22] << 8) + data_buffer[21]);
+                        MCUPID = (unsigned short)((data_buffer[24] << 8) + data_buffer[23]);
+                    }
+
+                    checksum = 0;
+                }
 
                 for (int a = 0; a < cnt_record; a++)
                 {
-                    if ((data_buffer[19 + (a * 8)] == 1) || (data_buffer[20 + (a * 8)] == LOAD_BALANCE_REGION)) //some fw didn't set LBP flag
+                    if(data_buffer[partition_offset + 19 + (a * 8)] == 0x01)
                     {
-                        bRet = Get_Partition_info(20 + (a * 8), data_buffer);
+                        bRet = Get_Partition_info(partition_offset + 20 + (a * 8), data_buffer);
                     }
                 }
             }
         }
         else
         {
-            bRet = Get_Partition_info(4, data_buffer); //real data only
+            bRet = Get_Partition_info(partition_offset + 4, data_buffer); //real data only
         }
     }
     else
@@ -1702,25 +1887,25 @@ bool DeviceIO_hid_over_i2c::Get_Partition_info(int idx, unsigned char* m_abytCon
     unsigned int str_addr = (unsigned int)((m_abytContent[idx + 1]) + (m_abytContent[idx + 2] << 8)) * 512;
     unsigned int size = (unsigned int)((m_abytContent[idx + 3]) + (m_abytContent[idx + 4] << 8)) * 512;
 
-    LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->idx:%d",idx);
+    //LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->idx:%d",idx);
 
     if (m_abytContent[idx] == APP_REGION)
     {
         GetFWStartAddress = str_addr;
         GetFWEraseSize = size;
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region MAINAPP str_addr: 0x%x  size: 0x%x",str_addr, size);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region MAINAPP str_addr: 0x%x  size: 0x%x",GetFWStartAddress, GetFWEraseSize);
     }
     else if (m_abytContent[idx] == BOOT_REGION)
     {
         GetBootStartAddress = str_addr;
         GetBootEraseSize = size;
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region BOOT str_addr: 0x%x  size: 0x%x",str_addr, size);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region BOOT str_addr: 0x%x  size: 0x%x",GetBootStartAddress, GetBootEraseSize);
     }
     else if (m_abytContent[idx] == CU_REGION)
     {
         GetCUStartAddress = str_addr;
         GetCUEraseSize = size;
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region CU str_addr: 0x%x  size: 0x%x",str_addr, size);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Rx->Partition Region CU str_addr: 0x%x  size: 0x%x",GetCUStartAddress, GetCUEraseSize);
     }
     else if (m_abytContent[idx] == BASEBIN_REGION)
     {
@@ -1755,109 +1940,131 @@ bool DeviceIO_hid_over_i2c::Get_Partition_info(int idx, unsigned char* m_abytCon
 
 int DeviceIO_hid_over_i2c::DumpFileInfo(unsigned char* file_buf, unsigned int partition_address)
 {
-
-    int tablecount = file_buf[partition_address + 0x19];
+    int tablecount = file_buf[partition_address + 0x09];
     //int Partition_structure_Ver = file_buf[partition_address + 0x11];
-    int i=0, index = 0;
+    int iRet = 1;
+    int i=0, idx = 0;
     int tableactive = 0;
-    int nRet = 1;
     unsigned int file_straddr = 0;
-    unsigned int file_erasesize = 0;    
+    unsigned int file_erasesize = 0;
+    unsigned char checksumboot = 0;
+    int offset = 0;
 
-    int id1 = file_buf[partition_address + 0x10];
-    int id2 = file_buf[partition_address + 0x18];
+    int id0 = file_buf[partition_address];
+    int id1 = file_buf[partition_address + 0x08];
+    int id2 = file_buf[partition_address + 0x10];
 
-    if((id1 == 0x00) && (id2 == 0x01) && (tablecount =! 0x00))
+    if((id0 == 0x00) && (file_buf[partition_address + 0x02] == 0xEA))
+    {
+        for (i = (int)(partition_address); i < (int)(partition_address + 0x07); i++)
+        {
+            checksumboot += file_buf[i];
+        }
+        if (checksumboot == file_buf[(partition_address + 0x07)])
+        {
+            BaseStartaddr = (unsigned int)((file_buf[partition_address + 0x06] << 24) + (file_buf[partition_address + 0x05] << 16) + (file_buf[partition_address + 0x04] << 8) + (file_buf[partition_address + 0x03] << 0)); //little endian
+            LOG_G2_D(CLog::getLogOwner(), TAG, "using file Baseaddress 0x%x",BaseStartaddr);            
+        }
+    }
+   
+    if((id2 == 0x02) && (file_buf[partition_address + 0x12] == 0xEA))
+    {
+        for (i = (int)(partition_address + 0x10); i < (int)(partition_address + 0x17); i++)
+        {
+            checksumboot += file_buf[i];
+        }
+        if (checksumboot == file_buf[(partition_address + 0x17)])
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "ID2 exist");
+            offset = 8;
+
+            if(Interface_Info == -1)
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "file includes ID2, but the Target does not include ID2, So apply File Info");
+                Interface_Info = file_buf[partition_address + 0x11];
+                MCUVID = (unsigned short)(((file_buf[partition_address + 0x14]) << 8) + (file_buf[partition_address + 0x13]));
+                MCUPID = (unsigned short)(((file_buf[partition_address + 0x16]) << 8) + (file_buf[partition_address + 0x15]));                
+            }
+        }
+
+        checksumboot = 0;
+    }
+
+    if((id0 == 0x00) && (file_buf[partition_address + 0x02] == 0xEA) && (id1 == 0x01) && (file_buf[partition_address + 0x0A] == 0xEA) && (tablecount != 0x00))
     {
         for( i =0; i< tablecount; i++)
         {
-            index = file_buf[partition_address + 0x22 + (i*8)];
-            tableactive = file_buf[partition_address + 0x21 + (i*8)];
+            idx = file_buf[partition_address + offset + 0x12 + (i*8)];
+            tableactive = file_buf[partition_address + offset + 0x11 + (i*8)];
 
             if(tableactive == 1)
             {
-                switch(index)
+                switch(idx)
                 {
                     case BOOT_REGION:
-                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8) )* 0x200;
-                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8))* 0x200;
+                        file_straddr = (unsigned int)(file_buf[partition_address + offset + 0x13 + (i*8)] + (file_buf[partition_address + offset  + 0x14 + (i*8)] << 8) )* 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + offset + 0x15 + (i*8)] + (file_buf[partition_address + offset + 0x16 + (i*8)] << 8))* 0x200;
                         
                         if(GetBootStartAddress != file_straddr)
                         {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "Boot straddr: 0x%x, Fileaddr: 0x%x",GetBootStartAddress, file_straddr);
-                            nRet = -1;
-                            return nRet;
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "Partition different Boot straddr: 0x%x, Fileaddr: 0x%x",GetBootStartAddress, file_straddr);
+                            GetBootStartAddress = file_straddr;
+                            iRet = -1;
                         }
                     
                         if(GetBootEraseSize != file_erasesize)
                         {
                             LOG_G2_D(CLog::getLogOwner(), TAG, "Boot Erase straddr: 0x%x, Fileaddr: 0x%x",GetBootEraseSize, file_erasesize);
-                            nRet = -1;
-                            return nRet;
+                            GetBootEraseSize = file_erasesize;
+                            iRet = -1;
                         }                        
                         break;
                     case CU_REGION:
-                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8)) * 0x200;
-                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8))* 0x200;
+                        file_straddr = (unsigned int)(file_buf[partition_address + offset + 0x13 + (i*8)] + (file_buf[partition_address + offset + 0x14 + (i*8)] << 8)) * 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + offset + 0x15 + (i*8)] + (file_buf[partition_address + offset + 0x16 + (i*8)] << 8))* 0x200;
                     
                         if(GetCUStartAddress != file_straddr)
                         {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU straddr: 0x%x, Fileaddr: 0x%x",GetCUStartAddress, file_straddr);                        
-                            nRet = -1;
-                            return nRet;
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU straddr: 0x%x, Fileaddr: 0x%x",GetCUStartAddress, file_straddr);
+                            GetCUStartAddress = file_straddr;
+                            
+                            iRet = -1;
                         }
 
                         if(GetCUEraseSize != file_erasesize)
                         {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);                        
-                            nRet = -1;
-                            return nRet;
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "CU Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);
+                            GetCUEraseSize = file_erasesize;                            
+                            iRet = -1;
                         }
 
                         break;
                     case APP_REGION:
-                        file_straddr = (unsigned int)(file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8)) * 0x200;
-                        file_erasesize = (unsigned int)(file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8)) * 0x200;
+                        file_straddr = (unsigned int)(file_buf[partition_address + offset + 0x13 + (i*8)] + (file_buf[partition_address + offset + 0x14 + (i*8)] << 8)) * 0x200;
+                        file_erasesize = (unsigned int)(file_buf[partition_address + offset + 0x15 + (i*8)] + (file_buf[partition_address + offset + 0x16 + (i*8)] << 8)) * 0x200;
                     
                         if(GetFWStartAddress != file_straddr)
                         {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW straddr: 0x%x, Fileaddr: 0x%x",GetFWStartAddress, file_straddr);                        
-                            nRet = -1;
-                            return nRet;
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW straddr: 0x%x, Fileaddr: 0x%x",GetFWStartAddress, file_straddr);
+                            GetFWStartAddress = file_straddr;                            
+                            iRet = -1;
                         }
 
                         if(GetFWEraseSize != file_erasesize)
                         {
-                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);                        
-                            nRet = -1;
-                            return nRet;
-                        }
-                        break;
-                    case LOAD_BALANCE_REGION:
-                        //GetLOADBALANCEStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
-                        //GetLOADBALANCEEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                    
-                        break;
-                    case UR_REGION:
-                        //GetURStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
-                        //GetUREraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                    
-                        break;
-                    case MT_REGION:
-                        //GetMTStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
-                        //GetMTEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);
-                    case FT_REGION:
-                        //GetFTStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
-                        //GetFTEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);
-                    case BASEBIN_INTEGRITY:
-                        //GetBASEBINStartAddress = file_buf[partition_address + 0x23 + (i*8)] + (file_buf[partition_address + 0x24 + (i*8)] << 8);
-                        //GetBASEBINEraseSize = file_buf[partition_address + 0x25 + (i*8)] + (file_buf[partition_address + 0x26 + (i*8)] << 8);                
+                            LOG_G2_D(CLog::getLogOwner(), TAG, "FW Erase straddr: 0x%x, Fileaddr: 0x%x",GetFWEraseSize, file_erasesize);
+                            GetFWEraseSize = file_erasesize;                            
+                            iRet = -1;
+                        }          
                         break;
                 }
             }
         }
     }
 
-    return nRet;    
+    return iRet;    
 }
+
 
 
 int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBoot_force_update, bool bPartition)
@@ -1880,7 +2087,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     if(strstr(fw_ver.c_str(), "00.00.0000") != NULL)
     {
         //LOG_G2_E(CLog::getLogOwner(), TAG, "Can't update bootloader.. Try it again After flashing !!!");
-        return 2;
+        return BOOTRUNNING;
     }
 
     if(bPartition == true)
@@ -1890,7 +2097,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
         boot_end_pos = GetBootEraseSize;
         pos = GetBootStartAddress;
     }
-
+    LOG_G2_D(CLog::getLogOwner(), TAG, "bootver_address 0x%x, bootstart_address 0x%x",bootver_address,bootstart_address);    
     LOG_G2_D(CLog::getLogOwner(), TAG, "Boot strpos : 0x%x, endpos : 0x%x",pos, boot_end_pos);
 
     //boot ver
@@ -1898,6 +2105,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     {
         char curr_boot[9]={0,}, targ_boot[9]={0,};
         nRequestResult = Dump(dump_buffer, bootver_address, 0x20);
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Try Dump Boot Version!!!!");        
         if(nRequestResult <= 0)
         {
             LOG_G2_E(CLog::getLogOwner(), TAG, "Version Dump Fail");
@@ -1914,7 +2122,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
             LOG_G2(CLog::getLogOwner(), TAG, "Same Bootloader");
             LOG_G2_D(CLog::getLogOwner(), TAG, "Target Boot Ver : %s",curr_boot);
             LOG_G2_D(CLog::getLogOwner(), TAG, "Binary Boot Ver : %s",targ_boot);
-            return nRequestResult; //boot_ver same
+            return BOOTSAMEVERSION; //boot_ver same
         }
         else
         {
@@ -1936,7 +2144,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     //Boot WRITE
     while(pos < boot_end_pos)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot dump send_pos : %X, end_pos : %X", pos, boot_end_pos);
+        LOG_G2_I( CLog::getLogOwner(), TAG, "Boot dump send_pos : %X, end_pos : %X", pos, boot_end_pos);
         memcpy(send_buffer, file_buf+pos, sizeof(send_buffer));
         nRequestResult = Boot_Write_CMD(send_buffer, send_length, CMD_MAIN_CMD);
 
@@ -1953,7 +2161,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     pos = 0;
     while(pos < BOOT_FILE_SIZE)
     {
-        LOG_G2_D( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
+        LOG_G2_I( CLog::getLogOwner(), TAG, "Boot send_pos : %X, end_pos : %X", pos, boot_end_pos);
         nRequestResult = Dump(dump_buffer+pos, bootstart_address+pos, DUMP_SIZE);
 
         if(nRequestResult <= 0)
@@ -1970,6 +2178,7 @@ int DeviceIO_hid_over_i2c::TxRequestBootUpdate(unsigned char* file_buf, bool bBo
     if(nRequestResult == 1)
     {
         LOG_G2(CLog::getLogOwner(), TAG, "Bootloader Update Success");
+        nRequestResult = BOOTWRITEFINISH; //write boot finish
     }
     else
     {
@@ -2013,7 +2222,7 @@ int DeviceIO_hid_over_i2c::dumpTofile_compare(unsigned char* dump_buffer, unsign
     {
         if(dump_buffer[i] != file_buf[i])
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i, dump_buffer[i], i, file_buf[i]);
+            LOG_G2_I(CLog::getLogOwner(), TAG, "dump[%X]=%02X, buf[%X]=%02X", i, dump_buffer[i], i, file_buf[i]);
             return 0;
         }
     }
@@ -2734,24 +2943,40 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
 
 int DeviceIO_hid_over_i2c::Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr, bool GetPartition)
 {
-    unsigned int fwstraddr = 0x08008000;
-    unsigned int addr = 0;
-    addr = (unsigned int)(file_buf[3 + idx] << 24) + (unsigned int)(file_buf[2 + idx] << 16) + (unsigned int)(file_buf[1 + idx] << 8) + (unsigned int)(file_buf[0 + idx]);
+    int a = 0;
+    unsigned char temp[4]={0,};    
+    unsigned int addr = (unsigned int)(file_buf[3 + idx] << 24 | file_buf[2 + idx] << 16 | file_buf[1 + idx] << 8 | file_buf[0 + idx]);
+
+        //check mcu type in file
+    temp[0] = file_buf[idx];
+    temp[1] = file_buf[idx + 1];
+    temp[2] = file_buf[idx + 2];
+    temp[3] = file_buf[idx + 3];
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "addr 0x%x idx 0x%x\n",addr, idx);
+    //LOG_G2_D(CLog::getLogOwner(), TAG, "file_buf 0x%X %x %x %x \n",file_buf[3 + idx], file_buf[2 + idx], file_buf[1 + idx], file_buf[idx]);
 
     if(GetPartition)
     {
-        fwstraddr = BaseStartaddr + GetFWStartAddress;
+        *FW_Startaddr = BaseStartaddr + GetFWStartAddress;
     }
-
-    if(addr != fwstraddr)
+    else
     {
-        return -1;
+        //check repeat
+        for (a = 1; a < 4; a++)
+        {
+            if (temp[0] != file_buf[idx + (a * 4)] || temp[1] != file_buf[1 + idx + (a * 4)] || temp[2] != file_buf[2 + idx + (a * 4)] || temp[3] != file_buf[3 + idx +  (a * 4)])
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "fw address is not repeat\n");
+                return -1;
+            }
+        }        
+        *FW_Startaddr = addr;
     }
-
-    *FW_Startaddr = addr;
 
     return 1;
 }
+
 
 int DeviceIO_hid_over_i2c::BaseBin_start_data(unsigned char* buf, unsigned char region)
 {
@@ -2797,5 +3022,109 @@ int DeviceIO_hid_over_i2c::BaseBin_finish(unsigned char* buf, unsigned char regi
     buf[size++] = G2_SUB_0x13_FLASH_FINISH;
     buf[size++] = region;
     return size;
+}
+
+
+unsigned int DeviceIO_hid_over_i2c::FindFWFeature(unsigned char *file_buf, unsigned int buf_size)
+{
+    bool found = 0;
+    unsigned char G2TouchVID[16] = {0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00};
+
+    // 0x10
+    for (FwFeaturepos = 0; FwFeaturepos < buf_size; FwFeaturepos += 0x10) {
+        if (memcmp(&file_buf[FwFeaturepos], G2TouchVID, 16) == 0) {
+            found = 1;
+            break;  // find"BootVer-"
+        }
+    }
+    
+    FwFeaturepos-=0x30;
+    LOG_G2_D(CLog::getLogOwner(), TAG, "FwFeaturepos 0x%x \n",FwFeaturepos);
+
+    if (found == 0) {
+        FwFeaturepos = 0x200;
+        return -1;   // not find
+        
+    }
+
+    return FwFeaturepos;
+}
+
+
+
+int DeviceIO_hid_over_i2c::FindBootVerandPartitionTable (unsigned char *file_buf, unsigned int buf_size)
+{
+    unsigned int  checksum = 0;
+    bool found = 0;
+    unsigned char nRet = 0;
+    unsigned int  a = 0;
+
+
+    Partitionpos = 0x60;
+    // 0x10
+    for (Bootloaderpos = 0; (Bootloaderpos + 0x08) < buf_size; Bootloaderpos += 0x10) {
+        if (memcmp(&file_buf[Bootloaderpos], "BootVer-", 8) == 0) {
+            found = 1;
+            break;  // find"BootVer-"
+        }
+    }
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Bootloaderpos 0x%x \n",Bootloaderpos);    
+
+    if (found == 0) {
+        return 0xff;   // error
+    }
+
+    if ((file_buf[Bootloaderpos + Partitionpos] == 0x00) && (file_buf[Bootloaderpos + (Partitionpos + 0x02)] == 0xEA) 
+        && (file_buf[Bootloaderpos + (Partitionpos + 0x08)] == 0x01) && (file_buf[Bootloaderpos + (Partitionpos + 0x0A)] == 0xEA)) {
+        // check partition head checksum
+        for (a = Partitionpos; a < (Partitionpos + 0x07); a++) {
+            checksum += file_buf[Bootloaderpos + a];
+        }
+        if (file_buf[Bootloaderpos + (Partitionpos + 0x07)] != (checksum & 0xFF)) {
+            nRet = 1;
+        }
+
+        checksum = 0; // initialize
+        for (a = (Partitionpos + 0x08); a < (Partitionpos + 0x0F); a++) {
+            checksum += file_buf[Bootloaderpos + a];
+        }
+        if (file_buf[Bootloaderpos + (Partitionpos + 0x0F)] != (checksum & 0xFF)) {
+            nRet = 1;
+        }
+    }
+    else
+    {
+        nRet = 1;
+    }
+
+    //re-try partition position 0x50
+    if(nRet == 1)
+    {
+        Partitionpos = 0x50;
+        if ((file_buf[Bootloaderpos + Partitionpos] == 0x00) && (file_buf[Bootloaderpos + (Partitionpos + 0x02)] == 0xEA) 
+            && (file_buf[Bootloaderpos + (Partitionpos + 0x08)] == 0x01) && (file_buf[Bootloaderpos + (Partitionpos + 0x0A)] == 0xEA)) {
+                // check partition head checksum
+                for (a = Partitionpos; a < (Partitionpos + 0x07); a++) {
+                    checksum += file_buf[Bootloaderpos + a];
+                }
+                if (file_buf[Bootloaderpos + (Partitionpos + 0x07)] != (checksum & 0xFF)) {
+                    return 0x00;
+                }
+
+                checksum = 0; // initialize
+                for (a = (Partitionpos + 0x08); a < (Partitionpos + 0x0F); a++) {
+                    checksum += file_buf[Bootloaderpos + a];
+                }
+                if (file_buf[Bootloaderpos + (Partitionpos + 0x0F)] != (checksum & 0xFF)) {
+                    return 0x00;
+            }
+        }
+        else
+        {
+            return 0x00;
+        }        
+    }
+
+    return Bootloaderpos;
 }
 

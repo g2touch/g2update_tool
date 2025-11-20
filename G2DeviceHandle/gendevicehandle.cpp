@@ -252,13 +252,16 @@ bool CDeviceHandler::CheckFirmwareVersion(int v_format)
 bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
 {
     //int iRet = 1;
-    int nBootUpdate_finish = false;
-    int nCUUpdate_finish = false;
-    int nFWUpdate_finish = false;
+    int nBootUpdate_finish = 0;
+    int nCUUpdate_finish = 0;
+    int nFWUpdate_finish = 0;
     bool bRequestPartition = false;
+    bool Partition_inTarget = false;
     int bPrechecking = 0;
+    int nRet = 0x00;
+    int nPrechecking = 0;
     int trynum = 0;
-
+    
     //HW Reset
     bPrechecking = TxRequestHW_Reset();
     if (bPrechecking <= 0)
@@ -268,25 +271,45 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
     }
     usleep(150000);
 
-
-    //check Partition Request  
-    if(filesize != 0x20000)
+    nPrechecking = FindBootVerandPartitionTable(file_buf, filesize);
+    if(nPrechecking == 0xff)        
     {
-        bRequestPartition = RequestPartitionInfo(bRequestPartition);
-        if(bRequestPartition == false)        
-        {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file");
-            return false;
-        }
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Cannot find BootVer");
+        return false;
+    }
+    else if(nPrechecking == 0x00)
+    {
+        bRequestPartition = false;
+    }
+    else
+    {
+        bRequestPartition = true;
     }
 
+    bPrechecking = FindFWFeature(file_buf, filesize);
+    if(bPrechecking < 0)        
+    {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file old FW");
+        //return false;
+    }
+
+    if(bRequestPartition == true)
+    {
+        Partition_inTarget = RequestPartitionInfo(bRequestPartition);
+        if(Partition_inTarget == false)        
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched Target with file");
+            //return false;
+        }
+    }
+    
     //check prepare condition
-    bPrechecking = Precheckforupdate(file_buf, m_bBootUpdateforce, bRequestPartition);
-    if(bPrechecking < 0)
+    nPrechecking = Precheckforupdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+    if(nPrechecking < 0)
     {
         LOG_G2_E(CLog::getLogOwner(), TAG, "Update Condition Error");
         return false;
-    }
+    }    
 
     LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate Finish");
 
@@ -311,51 +334,50 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
         {
             break;
         }
+    
     }
 	usleep(500000);
 
-/*
     for(trynum = 0; trynum < 3; trynum++)
-    {
-        if(nBootUpdate_finish == 1) //boot update success
+    {    
+        nRet = HWReset();
+        if(nRet <= 0)        
         {
-            if(cu_ver != 0x0c) 
-            {
-                iRet = TxRequestBASEBINUpdate(file_buf, bRequestPartition);
-            }
-    		if(iRet <= 0)
-    		{
-        		if(trynum == 2)
-        		{
-                    LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Update Error");
-                    return false;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to HWReset");
+            continue;
+        }   
+        
+        nRet = GoToBoot();
+        if(nRet <= 0)        
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot");
+            continue;
+        }
+        
+        if(trynum == 2)        
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot & HWReset");        
+            return false;
+        }
 
-        		}
-                else
-                {
-                    continue;
-                }
-    		}
+        //success
+        break;
+    }
 
-            if((GetLOADBALANCEStartAddress != 0x00) && (cu_ver == 10))
-            {
-                iRet = TxRequestLOADBALANCEUpdate(file_buf, bRequestPartition);
-            }
-    		if(iRet <= 0)
-    		{
-        		if(trynum == 2)
-        		{
-                    LOG_G2_E(CLog::getLogOwner(), TAG, "LoadBalance Update Error");
-                    return false;
-        		}
-                else
-                {
-                    continue;
-                }
-    		}
+    //get new bootloader partition after Bootwrite
+    if((bRequestPartition == true) && (nBootUpdate_finish == BOOTWRITEFINISH))
+    {
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Get new Partition table");
+    
+        bRequestPartition = RequestPartitionInfo(bRequestPartition);
+        if(bRequestPartition == false)        
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file");
+            return false;
         }
     }
-*/
+
+
     for(trynum = 0; trynum < 3; trynum++)
     {
 
@@ -391,7 +413,8 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
         break;
     }
 
-    if(nBootUpdate_finish == 2) //stay in Bootloader When boot updated
+    LOG_G2_D(CLog::getLogOwner(), TAG, "nBootUpdate_finish %d", nBootUpdate_finish);
+    if(nBootUpdate_finish == BOOTRUNNING) //stay in Bootloader When boot updated
     {
         //boot update
         for(trynum = 0; trynum < 3; trynum++)
@@ -416,53 +439,7 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
             }
         }    
         usleep(1500000);
-/*        
-        for(trynum = 0; trynum < 3; trynum++)
-        {
-            if(nBootUpdate_finish == 1) //boot update success
-            {
-                if(cu_ver != 0x0c) 
-                {
-                    iRet = TxRequestBASEBINUpdate(file_buf, bRequestPartition);
-                }
-        		if(iRet <= 0)
-        		{
-            		if(trynum == 2)
-            		{
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "BaseBin Update Error");
-                        return false;
-
-            		}
-                    else
-                    {
-                        continue;
-                    }
-        		}
-
-                if((GetLOADBALANCEStartAddress != 0x00) && (cu_ver == 12))
-                {
-                    iRet = TxRequestLOADBALANCEUpdate(file_buf, bRequestPartition);
-                }
-        		if(iRet <= 0)
-        		{
-            		if(trynum == 2)
-            		{
-                        LOG_G2_E(CLog::getLogOwner(), TAG, "LoadBalance Update Error");
-                        return false;
-            		}
-                    else
-                    {
-                        continue;
-                    }
-        		}        
-            }
-            else
-            {
-    			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate try fail");
-    			return false;
-            }
-        }        
-*/        
+       
         TxRequestSystem_Reset();
     }
 
@@ -504,4 +481,5 @@ unsigned short CDeviceHandler::getPID()
 {
     return m_PID;
 }
+
 

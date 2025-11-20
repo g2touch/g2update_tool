@@ -23,6 +23,10 @@
 /* symbol*/
 #define MESSAGE_BEGIN ":~$ "
 
+#define BOOTSAMEVERSION   1
+#define BOOTRUNNING       2
+#define BOOTWRITEFINISH   3
+
 namespace G2
 {
     class LOG_EXPORT CLog

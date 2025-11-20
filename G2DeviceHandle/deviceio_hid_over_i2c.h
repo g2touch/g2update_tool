@@ -49,12 +49,15 @@ namespace G2
                 int BaseBin_erase_data(unsigned char* buf, unsigned char region);
                 int Flash0x09CheckSum_data(unsigned char* buf, int file_size, unsigned int fw_checksum);
                 int BaseBin_finish(unsigned char* buf, unsigned char region);
-                unsigned short MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx);
+                unsigned short MCUType_Verify(unsigned char* file_buf, int filebuf_idx, int filebuf_bootidx, bool getPartition);
                 int File_Write_CMD(unsigned char* send_buffer, unsigned short send_length, unsigned char send_cmd, unsigned char  region);
                 int Patition_Request(unsigned char region);
-                int check_VID_PID(unsigned char* file_buf);
+                int check_VID_PID(unsigned char* file_buf, bool getPartition);
                 void SET_basestraddr(unsigned short vid_temp);
-
+                int GoToBoot();
+                int HWReset();
+                unsigned int FindFWFeature(unsigned char *file_buf, unsigned int buf_size);
+                int FindBootVerandPartitionTable (unsigned char *file_buf, unsigned int buf_size);                
             protected:
                 void initBuffer();
 
@@ -89,6 +92,7 @@ namespace G2
 				bool Check_Nak(unsigned char *Rx_buf);
 				int Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr, bool GetPartition);
 				bool Get_Partition_info(int idx, unsigned char* m_abytContent);
+
 
             private:
                 int m_fd;
@@ -126,7 +130,13 @@ namespace G2
                 unsigned short MCUVID;
                 unsigned int BaseStartaddr;
                 unsigned int Protocol_Ver;
+                unsigned int Bootloaderpos;
+                unsigned int FwFeaturepos;
+                unsigned int Partitionpos;
+                unsigned int CU_size_from_FileVirgincode;
                 unsigned char cu_ver;
+                char Interface_Info;
+                bool m_Partition_NotMatched;
         };
 
     }
