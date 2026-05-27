@@ -261,161 +261,137 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
     int nRet = 0x00;
     int nPrechecking = 0;
     int trynum = 0;
-    
-    //HW Reset
-    bPrechecking = TxRequestHW_Reset();
-    if (bPrechecking <= 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
-        return false;
-    }
-    usleep(150000);
 
-    nPrechecking = FindBootVerandPartitionTable(file_buf, filesize);
-    if(nPrechecking == 0xff)        
-    {
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Cannot find BootVer");
-        return false;
-    }
-    else if(nPrechecking == 0x00)
-    {
-        bRequestPartition = false;
+    if(CheckSFIfile(file_buf, filesize) == true)
+    {    
+        for(trynum = 0; trynum < 3; trynum++)
+        {    
+            nRet = Region_File_Write(WRITE_SSA_REGION);
+            usleep(150000);
+            if(nRet == false) 
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "SSA Region_File_Write");
+                continue;
+            }
+            else
+                break;
+        }
+        if(trynum == 2)
+        {
+            return false;
+        }
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "SSA Region_File_Write Finish");
+
+        for(trynum = 0; trynum < 3; trynum++)
+        { 
+            nRet = Region_File_Write(WRITE_NSSD_REGION);
+            usleep(150000);            
+            if(nRet == false)
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "NSSD Region_File_Write");
+                continue;
+            }
+            else
+                break;                
+        }        
+        if(trynum == 2)
+        {
+            return false;
+        }
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "NSSD Region_File_Write Finish");
+
+		TxRequestSystem_Reset();
+
+        closeDevice();
+        LOG_G2_I(CLog::getLogOwner(), TAG, "Stale file descriptor closed. Waiting for device reboot...");
+        usleep(5000000);
+
+        // reopendevice
+        LOG_G2_I(CLog::getLogOwner(), TAG, "Re-opening device node...");
+        if (openDevice() == false)
+        {
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Critical: Failed to re-open device after!");
+            return false;
+        }
+        LOG_G2_I(CLog::getLogOwner(), TAG, "Device successfully re-opened with a new file descriptor.");        
+
+        for(trynum = 0; trynum < 3; trynum++)
+        { 
+            nRet = Region_File_Write(WRITE_NSSA_REGION);
+            usleep(150000);            
+            if(nRet == false)
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "NSSA Region_File_Write");
+                continue;
+            }
+            else
+                break;            
+        }
+
+        if(trynum == 2)
+        {
+            return false;
+        }
+        
+        TxRequestSystem_Reset();
+        
+        return true;
     }
     else
-    {
-        bRequestPartition = true;
-    }
-
-    bPrechecking = FindFWFeature(file_buf, filesize);
-    if(bPrechecking < 0)        
-    {
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file old FW");
-        //return false;
-    }
-
-    if(bRequestPartition == true)
-    {
-        Partition_inTarget = RequestPartitionInfo(bRequestPartition);
-        if(Partition_inTarget == false)        
+    {    
+        //HW Reset
+        bPrechecking = TxRequestHW_Reset();
+        if (bPrechecking <= 0)
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched Target with file");
-            //return false;
+            LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestHW_Reset error");
+            return false;
         }
-    }
-    
-    //check prepare condition
-    nPrechecking = Precheckforupdate(file_buf, m_bBootUpdateforce, bRequestPartition);
-    if(nPrechecking < 0)
-    {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "Update Condition Error");
-        return false;
-    }    
+        usleep(150000);
 
-    LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate Finish");
-
-    //boot update
-    for(trynum = 0; trynum < 3; trynum++)
-    {
-        nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce, bRequestPartition);
-        if(nBootUpdate_finish <= 0)
+        nPrechecking = FindBootVerandPartitionTable(file_buf, filesize);
+        if(nPrechecking == 0xff)        
         {
-    		m_bBootUpdateforce = true;
-    		if(trynum == 2)
-    		{
-    			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
-    			return false;
-    		}
-            else
-            {
-                continue;
-            }
-    	}
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Cannot find BootVer");
+            return false;
+        }
+        else if(nPrechecking == 0x00)
+        {
+            bRequestPartition = false;
+        }
         else
         {
-            break;
-        }
-    
-    }
-	usleep(500000);
-
-    for(trynum = 0; trynum < 3; trynum++)
-    {    
-        nRet = HWReset();
-        if(nRet <= 0)        
-        {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to HWReset");
-            continue;
-        }   
-        
-        nRet = GoToBoot();
-        if(nRet <= 0)        
-        {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot");
-            continue;
-        }
-        
-        if(trynum == 2)        
-        {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot & HWReset");        
-            return false;
+            bRequestPartition = true;
         }
 
-        //success
-        break;
-    }
-
-    //get new bootloader partition after Bootwrite
-    if((bRequestPartition == true) && (nBootUpdate_finish == BOOTWRITEFINISH))
-    {
-        LOG_G2_D(CLog::getLogOwner(), TAG, "Get new Partition table");
-    
-        bRequestPartition = RequestPartitionInfo(bRequestPartition);
-        if(bRequestPartition == false)        
+        bPrechecking = FindFWFeature(file_buf, filesize);
+        if(bPrechecking < 0)        
         {
-            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file");
-            return false;
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file old FW");
+            //return false;
         }
-    }
 
-
-    for(trynum = 0; trynum < 3; trynum++)
-    {
-
-        nCUUpdate_finish = TxRequestCuUpdate(file_buf, bRequestPartition);
-        if(nCUUpdate_finish <= 0)
+        if(bRequestPartition == true)
         {
-    		if(trynum == 2)
-    		{
-                LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
-                return false;
-    		}
-            else
+            Partition_inTarget = RequestPartitionInfo(bRequestPartition);
+            if(Partition_inTarget == false)        
             {
-                continue;
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched Target with file");
+                //return false;
             }
         }
-
-        nFWUpdate_finish = TxRequestFwUpdate(file_buf, bRequestPartition);
-
-        if(nFWUpdate_finish <= 0)
+        
+        //check prepare condition
+        nPrechecking = Precheckforupdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+        if(nPrechecking < 0)
         {
-    		if(trynum == 2)
-    		{
-                LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
-                return false;
-    		}
-            else
-            {
-                continue;
-            }
-        }
+            LOG_G2_E(CLog::getLogOwner(), TAG, "Update Condition Error");
+            return false;
+        }    
 
-        break;
-    }
+        LOG_G2_D(CLog::getLogOwner(), TAG, "Precheckforupdate Finish");
 
-    LOG_G2_D(CLog::getLogOwner(), TAG, "nBootUpdate_finish %d", nBootUpdate_finish);
-    if(nBootUpdate_finish == BOOTRUNNING) //stay in Bootloader When boot updated
-    {
         //boot update
         for(trynum = 0; trynum < 3; trynum++)
         {
@@ -437,44 +413,161 @@ bool CDeviceHandler::G2Update(unsigned char* file_buf, int filesize)
             {
                 break;
             }
-        }    
-        usleep(1500000);
-       
-        TxRequestSystem_Reset();
-    }
+        
+        }
+    	usleep(500000);
 
-    usleep(800000);
+        for(trynum = 0; trynum < 3; trynum++)
+        {    
+            nRet = HWReset();
+            if(nRet <= 0)        
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to HWReset");
+                continue;
+            }   
+            
+            nRet = GoToBoot();
+            if(nRet <= 0)        
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot");
+                continue;
+            }
+            
+            if(trynum == 2)        
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Fail to GoToBoot & HWReset");        
+                return false;
+            }
 
-    m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+            //success
+            break;
+        }
 
-    if(m_sFwVersion == "")
-    {
-        usleep(500000);    
+        //get new bootloader partition after Bootwrite
+        if((bRequestPartition == true) && (nBootUpdate_finish == BOOTWRITEFINISH))
+        {
+            LOG_G2_D(CLog::getLogOwner(), TAG, "Get new Partition table");
+        
+            bRequestPartition = RequestPartitionInfo(bRequestPartition);
+            if(bRequestPartition == false)        
+            {
+                LOG_G2_D(CLog::getLogOwner(), TAG, "Not matched MCU with file");
+                return false;
+            }
+        }
+
+
+        for(trynum = 0; trynum < 3; trynum++)
+        {
+
+            nCUUpdate_finish = TxRequestCuUpdate(file_buf, bRequestPartition);
+            if(nCUUpdate_finish <= 0)
+            {
+        		if(trynum == 2)
+        		{
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestCuUpdate Error");
+                    return false;
+        		}
+                else
+                {
+                    continue;
+                }
+            }
+
+            nFWUpdate_finish = TxRequestFwUpdate(file_buf, bRequestPartition);
+
+            if(nFWUpdate_finish <= 0)
+            {
+        		if(trynum == 2)
+        		{
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestFWUpdate Error");
+                    return false;
+        		}
+                else
+                {
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "nBootUpdate_finish %d", nBootUpdate_finish);
+        if(nBootUpdate_finish == BOOTRUNNING) //stay in Bootloader When boot updated
+        {    
+        
+            //boot update
+            for(trynum = 0; trynum < 3; trynum++)
+            {
+                nBootUpdate_finish = TxRequestBootUpdate(file_buf, m_bBootUpdateforce, bRequestPartition);
+                if(nBootUpdate_finish <= 0)
+                {
+            		m_bBootUpdateforce = true;
+            		if(trynum == 2)
+            		{
+            			LOG_G2_E(CLog::getLogOwner(), TAG, "TxRequestBootUpdate Error");
+            			return false;
+            		}
+                    else
+                    {
+                        closeDevice();
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "Stale file descriptor closed. Waiting for device reboot...");
+                        usleep(5000000);                    
+                    
+                        //reopendevice
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "Re-opening device node...");
+                        if (openDevice() == false)
+                        {
+                            LOG_G2_E(CLog::getLogOwner(), TAG, "Critical: Failed to re-open device!");
+                            return false;
+                        }
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "Device successfully re-opened with a new file descriptor.");                            
+                        continue;
+                    }
+            	}
+                else
+                {
+                    break;
+                }
+            }    
+            usleep(1500000);
+           
+            TxRequestSystem_Reset();
+        }
+
+        usleep(800000);
+
         m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+
         if(m_sFwVersion == "")
         {
-            LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+            usleep(500000);    
+            m_sFwVersion = TxRequestFwVer(1000, m_bVerHex);
+            if(m_sFwVersion == "")
+            {
+                LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Version Get Fail");
+            }
         }
-    }
 
-    if(!(m_sFwVersion == ""))
-    {
-        if(m_bVerHex)
+        if(!(m_sFwVersion == ""))
         {
-            LOG_G2(CLog::getLogOwner(), TAG, "(HEX)Updated FW Ver : %s",m_sFwVersion.c_str());
+            if(m_bVerHex)
+            {
+                LOG_G2(CLog::getLogOwner(), TAG, "(HEX)Updated FW Ver : %s",m_sFwVersion.c_str());
+            }
+            else
+            {
+                LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Ver : %s",m_sFwVersion.c_str());
+            }
         }
-        else
+
+        if(((nBootUpdate_finish == 1) || (nBootUpdate_finish == 3))  && (nCUUpdate_finish == 1) && (nFWUpdate_finish == 1))
         {
-            LOG_G2(CLog::getLogOwner(), TAG, "Updated FW Ver : %s",m_sFwVersion.c_str());
+            return true;
         }
-    }
 
-    if((nBootUpdate_finish == 1)  && (nCUUpdate_finish == 1) && (nFWUpdate_finish == 1))
-    {
-        return true;
+        return false;
     }
-
-    return false;
 }
 
 unsigned short CDeviceHandler::getPID()

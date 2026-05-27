@@ -23,20 +23,19 @@
 #include <unistd.h>
 
 /* C */
-#include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <algorithm>
+#include <cstring>
 
 #include "logmanager.h"
 #include "deviceexception.h"
 #include "deviceio_hid_over_i2c.h"
-#include "packet.h"
-#include <list>
-#include <errno.h>
 
 #define CMD_F1_RETRY_MAX    5
 #define OUTPUT_IGNORE       4
+
+#define G2_REG_KEY_LENGTH   370
 
 
 /* cmd info */
@@ -56,6 +55,11 @@
 #define G2_SUB_0x13_0x09_FLASH_CHECKSUM 0x09
 #define G2_SUB_0x13_FLASH_FINISH        0x07
 
+#define G2_SUB_0x13_REGION_WRITE_START         0x41
+#define G2_SUB_0x13_REGION_WRITE_ERASE         0x42
+#define G2_SUB_0x13_REGION_WRITE_WRITE         0x43
+#define G2_SUB_0x13_REGION_WRITE_CRC32      0x44
+#define G2_SUB_0x13_REGION_WRITE_FINISH        0x45
 
 #define G2_SUB_0x13_GOTOBOOT            0x80
 #define G2_SUB_0x13_FWDOWNREADY         0x81
@@ -113,6 +117,9 @@
 #define LOAD_BALANCE_REGION 0x40
 #define UR_REGION           0x50
 #define URD_REGION          0x51
+#define WRITE_NSSA_REGION  0x60
+#define WRITE_NSSD_REGION  0x61
+#define WRITE_SSA_REGION  0x62
 
 //MCU VID
 #define STM_VID      0x0483
@@ -132,6 +139,8 @@
 #define ADDRESS_META_DATA_IN_APP     0x200
 #define ADDRESS_META_DATA_IN_MCHIP_U535     0x300
 
+#define _512K 0x80000
+
 #define OFFSET_MCU_TYPE_IN_META_DATA 0x40
 
 #define GD_STML432_FWSTRADDRR_POS 0x8200
@@ -140,24 +149,33 @@
 #define GD_VIRGIN_CODE_POS 0x5FF0
 
 
+
+
+#define eFLASH_REGION_SECURE_FILE_SSA  0x00
+#define eFLASH_REGION_SECURE_FILE_NSSA  0x01
+#define eFLASH_REGION_SECURE_FILE_NSSD  0x03
+
 using namespace G2;
 using namespace G2::DeviceIO;
 
 #define TAG "deviceio_hid_over_i2c"
 
 DeviceIO_hid_over_i2c::DeviceIO_hid_over_i2c(CArgHandler *argHandler):
-    m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),
-    index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0), 
-	m_bOpened(false),GetFWStartFullAddress(0),GetFWStartFullErasesize(0), GetFWStartAddress(0), GetFWEraseSize(0),GetBootStartAddress(0),GetBootEraseSize(0),
+    m_fd(0), out_buffer(0), in_buffer(0), rxdbgbuf(0), tmpRxUnit(0),index(0), packet_length(0), dbgidx_push(0), dbgidx_pop(0), 	m_bOpened(false), 
+    NSSA_Buf(NULL), NSSD_Buf(NULL), SSA_Buf(NULL),GetFWStartFullAddress(0),GetFWStartFullErasesize(0), GetFWStartAddress(0), GetFWEraseSize(0),GetBootStartAddress(0),GetBootEraseSize(0),
 	GetCUStartAddress(0), GetCUEraseSize(0), GetLOADBALANCEStartAddress(0), GetLOADBALANCEEraseSize(0),
 	GetURStartAddress(0), GetUREraseSize(0), GetURDStartAddress(0), GetURDEraseSize(0), GetMTStartAddress(0), GetMTEraseSize(0),
     GetFTStartAddress(0), GetFTEraseSize(0), GetBASEBINStartAddress(0), GetBASEBINEraseSize(0), MCUPID(0), MCUVID(0),
-    BaseStartaddr(0), Protocol_Ver(0), Bootloaderpos(0), FwFeaturepos(0), Partitionpos(0), CU_size_from_FileVirgincode(0), cu_ver(0), Interface_Info(-1),m_Partition_NotMatched(false)
+    BaseStartaddr(0), Protocol_Ver(0), Bootloaderpos(0), FwFeaturepos(0), Partitionpos(0), CU_size_from_FileVirgincode(0), cu_ver(0), Interface_Info(-1),m_Partition_NotMatched(false),
+    NSSA_size(0), NSSD_size(0), SSA_size(0)
 {
     /* malloc out_buffer, in_buffer */
     out_buffer = new unsigned char[HID_OUTPUT_MAX_LEN];
     in_buffer = new unsigned char[HID_INPUT_MAX_LEN];
     rxdbgbuf = new unsigned char[RXDBGBUFSIZE];
+    NSSA_Buf = new unsigned char[_512K];
+    NSSD_Buf = new unsigned char[_512K];
+    SSA_Buf = new unsigned char[_512K];
     initBuffer();
     index =0;
     packet_length=0;
@@ -173,6 +191,9 @@ DeviceIO_hid_over_i2c::~DeviceIO_hid_over_i2c()
     delete [] out_buffer;
     delete [] in_buffer;
     delete [] rxdbgbuf;
+    delete [] NSSA_Buf;
+    delete [] NSSD_Buf;
+    delete [] SSA_Buf;    
     delete tmpRxUnit;
 }
 
@@ -586,15 +607,20 @@ int DeviceIO_hid_over_i2c::waitRxData(int &fd, int uSec)
 // TODO: architecture change
 int DeviceIO_hid_over_i2c::TxSingleCmdWaitAck(unsigned char cmd, unsigned char* data, int data_len, int uSecWait)
 {
-	int nReadSize = -1;
-	unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
+    int nReadSize = -1;
+    unsigned char *tmp_read = new unsigned char[HID_INPUT_MAX_LEN];
+    unsigned char sub_cmd = 0;
 
-	waitRxData(m_fd, uSecWait);
-	nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, 0);
+    if (cmd == CMD_MAIN_CMD && data != NULL && data_len > 0) {
+        sub_cmd = data[0];
+    }
 
-	LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
-	////////////////////////////////////////////////////////////////////////
-	// Inside of readData, ather commands were ignored in this architecture.
+    waitRxData(m_fd, uSecWait);
+   
+    nReadSize = readData(tmp_read, HID_INPUT_MAX_LEN, cmd, sub_cmd);
+
+    LOG_G2_I(CLog::getLogOwner(), TAG, "nReadSize : %d", nReadSize);
+        
     if((nReadSize > 2) && ((tmp_read[4] == cmd) || (cmd == CMD_FW_VER)))
     {
         bool bRet = Check_Nak(tmp_read);
@@ -636,7 +662,7 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
     int size = -1;
     int ret =0;
 
-    while(size != 0 && nTry++ < 10)
+    while(size != 0 && nTry++ < 30)
     {
         waitRxData(m_fd, uSecWait);
         size = readData(in_buffer, HID_INPUT_MAX_LEN, 0, 0);
@@ -665,13 +691,13 @@ int DeviceIO_hid_over_i2c::TryWriteData(unsigned char cmd, unsigned char* data, 
         return ret;
     }
 
-    LOG_G2_I(CLog::getLogOwner(), TAG, "uSecWait : %d", uSecWait);
+    LOG_G2_I(CLog::getLogOwner(), TAG, "uSecWait : %d", mSecWait);
 
     ret =0;
     nTry = 0;
     while (++nTry <= trial)
     {
-        nTryResult = TxSingleCmdWaitAck(cmd, data, data_len, uSecWait);
+        nTryResult = TxSingleCmdWaitAck(cmd, data, data_len, mSecWait * 1000);
         if (nTryResult > 2)
         {	// ACK received
             ret = 1;
@@ -1345,10 +1371,10 @@ unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, in
     int iRet = 0;
 
     //check mcu type in file
-    temp[0] = file_buf[filebuf_idx];
-    temp[1] = file_buf[filebuf_idx + 1];
-    temp[2] = file_buf[filebuf_idx + 2];
-    temp[3] = file_buf[filebuf_idx + 3];
+    temp[0] = file_buf[filebuf_bootidx];
+    temp[1] = file_buf[filebuf_bootidx + 1];
+    temp[2] = file_buf[filebuf_bootidx + 2];
+    temp[3] = file_buf[filebuf_bootidx + 3];
 
     if(Interface_Info == -1) //MCUVID PID info is FileInfo
     {
@@ -1356,10 +1382,13 @@ unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, in
         MCUPID = (unsigned short)((file_buf[filebuf_bootidx + 3] << 8) + file_buf[filebuf_bootidx + 2]);    
     }
 
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Interface_Info %d, filebuf_bootidx 0x%x filebuf_idx 0x%x",Interface_Info, filebuf_bootidx, filebuf_idx);
+    LOG_G2_D(CLog::getLogOwner(), TAG, "MCU VID 0x%x, MCU PID 0x%x",MCUVID, MCUPID );
+
     //check repeat
     for (a = 1; a < 4; a++)
     {
-        if (temp[0] != file_buf[filebuf_idx + (a * 4)] || temp[1] != file_buf[filebuf_idx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_idx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_idx + (a * 4 + 3)])
+        if (temp[0] != file_buf[filebuf_bootidx + (a * 4)] || temp[1] != file_buf[filebuf_bootidx + (a * 4 + 1)] || temp[2] != file_buf[filebuf_bootidx + (a * 4 + 2)] || temp[3] != file_buf[filebuf_bootidx + (a * 4 + 3)])
         {
             if(Interface_Info == -1)
             {
@@ -1373,6 +1402,18 @@ unsigned short DeviceIO_hid_over_i2c::MCUType_Verify(unsigned char* file_buf, in
             }
         }
     }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "MCU VID2 0x%x, MCU PID2 0x%x",MCUVID, MCUPID );
+
+    if(Interface_Info == -1)
+    {
+        if((MCUVID == 0xffff) || (MCUVID == 0x0000)) // if all feature data is zero
+        {
+            MCUVID = STM_VID;
+            MCUPID = STM_L432_PID; // No MCU Type repeat pattern found. regard as old STM FW
+        }
+    }
+    LOG_G2_D(CLog::getLogOwner(), TAG, "MCU VID3 0x%x, MCU PID3 0x%x",MCUVID, MCUPID );
 
     if(Interface_Info == -1) //MCUVID PID info is FileInfo
     {    
@@ -1593,7 +1634,7 @@ int DeviceIO_hid_over_i2c::Precheckforupdate(unsigned char* file_buf, bool bBoot
     unsigned int partition_address = 0;
     int fwstraddr_pos = FwFeaturepos;
 
-    if(getPartition == 1)
+    if(getPartition == true)
     {
         partition_address = (Bootloaderpos + Partitionpos);
     }
@@ -2660,7 +2701,7 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
         if( read_retry == 0)
         {
-            delete m_pcReadBuf;
+            delete[] m_pcReadBuf;
             return false ;
         }
 
@@ -2678,7 +2719,7 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
             if(m_nReadAddr != rx_addr)
             {
-                delete m_pcReadBuf;
+                delete[] m_pcReadBuf;
                 return false;
             }
             memcpy(dump_buffer+pos, m_pcReadBuf+16, iRet-16);
@@ -2714,7 +2755,7 @@ int DeviceIO_hid_over_i2c::Dump(unsigned char* dump_buffer, int address, int siz
 
     }
 
-    delete m_pcReadBuf;
+    delete[] m_pcReadBuf;
 
     return true ;
 
@@ -2906,6 +2947,81 @@ bool DeviceIO_hid_over_i2c::Check_Nak(unsigned char *Rx_buf)
                         bRet = false;
                         return bRet;
                     }
+
+                case G2_SUB_0x13_REGION_WRITE_START:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_START: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_START: NAK");
+                        bRet = false;
+                        return bRet;
+                    }                    
+
+                case G2_SUB_0x13_REGION_WRITE_ERASE:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_ERASE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_ERASE: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_REGION_WRITE_WRITE:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_WRITE: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_WRITE: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_REGION_WRITE_CRC32:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_CRC32: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        unsigned int crc32_ack = (unsigned int)(Rx_buf[9] << 24 |Rx_buf[10] << 16 | Rx_buf[11] << 8 | Rx_buf[12]);
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_CRC32: %X NAK",crc32_ack);
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_REGION_WRITE_FINISH:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_FINISH: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_REGION_WRITE_FINISH: NAK");
+                        bRet = false;
+                        return bRet;
+                    }
+                case G2_SUB_0x13_SYSTEMRESET:
+                    if(Rx_buf[8] == 0x00)
+                    {
+                        LOG_G2_I(CLog::getLogOwner(), TAG, "G2_SUB_0x13_SYSTEMRESET: ACK");
+                        return bRet;
+                    }
+                    else
+                    {
+                        LOG_G2_D(CLog::getLogOwner(), TAG, "G2_SUB_0x13_SYSTEMRESET: NAK");
+                        bRet = false;
+                        return bRet;
+                    }                                        
                  default:
                      return bRet;
             }
@@ -3025,7 +3141,7 @@ int DeviceIO_hid_over_i2c::BaseBin_finish(unsigned char* buf, unsigned char regi
 }
 
 
-unsigned int DeviceIO_hid_over_i2c::FindFWFeature(unsigned char *file_buf, unsigned int buf_size)
+int DeviceIO_hid_over_i2c::FindFWFeature(unsigned char *file_buf, unsigned int buf_size)
 {
     bool found = 0;
     unsigned char G2TouchVID[16] = {0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00, 0x94, 0x2A, 0x00, 0x00};
@@ -3068,7 +3184,7 @@ int DeviceIO_hid_over_i2c::FindBootVerandPartitionTable (unsigned char *file_buf
             break;  // find"BootVer-"
         }
     }
-    LOG_G2_D(CLog::getLogOwner(), TAG, "Bootloaderpos 0x%x \n",Bootloaderpos);    
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Bootloaderpos 0x%x \n",Bootloaderpos);
 
     if (found == 0) {
         return 0xff;   // error
@@ -3127,4 +3243,461 @@ int DeviceIO_hid_over_i2c::FindBootVerandPartitionTable (unsigned char *file_buf
 
     return Bootloaderpos;
 }
+
+bool DeviceIO_hid_over_i2c::CheckSFIfile(unsigned char* file_buf, int file_size)
+{
+    unsigned char* ptr_NSSA;
+    unsigned char* ptr_NSSD;
+    unsigned char* ptr_SSA;
+    unsigned char* payload_start;
+
+    const int PATH_LEN = 320;
+    const int FILENAME_LEN = 200;
+    const int VER_LEN = 50;
+    const int FILE_INFO_BLOCK_SIZE = PATH_LEN + FILENAME_LEN + VER_LEN + 8;
+    int title_length = (int)file_buf[G2_REG_KEY_LENGTH];
+    
+    const std::string SFI_MAGIC_KEY = "0033990033CC0033AFF00660000 OneClick";
+
+    if (file_buf == NULL || file_size < (int)SFI_MAGIC_KEY.length()) 
+    {
+        return false;
+    }
+
+    const unsigned char* search_key = reinterpret_cast<const unsigned char*>(SFI_MAGIC_KEY.data());
+    const unsigned char* it = std::search(
+        file_buf, file_buf + file_size, 
+        search_key, search_key + SFI_MAGIC_KEY.length()
+    );
+
+    if (it == (file_buf + file_size)) 
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not SFI File\n");     
+        return false;
+    }
+
+    
+    int offset = (it - file_buf) + G2_REG_KEY_LENGTH; //370 G2_Reg_Key Length
+    int header_start = (offset + title_length + 4);
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "header_start %x, title_length %x, secureflag %x",header_start, title_length, (unsigned char)file_buf[header_start + 0x29]);
+
+    if(file_buf[header_start + 0x29] == false)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "Secure File Flag is false");
+        return false;
+    }
+    LOG_G2_D(CLog::getLogOwner(), TAG, "Secure File Flag is true");
+    
+    unsigned int title_len = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4 + title_len; 
+
+    //header 0x10F
+    offset += 0x10F;
+
+    //unsigned int ap_size, ur_size;
+
+    offset += FILE_INFO_BLOCK_SIZE;
+    NSSA_size = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4;
+
+    offset += FILE_INFO_BLOCK_SIZE;
+    NSSD_size = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4;
+
+    offset += FILE_INFO_BLOCK_SIZE;
+    SSA_size = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "NSSA_size %d, NSSD_size %d, SSA_size %d",NSSA_size, NSSD_size, SSA_size);
+    
+
+    offset += FILE_INFO_BLOCK_SIZE;
+    //ap_size = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4;
+
+    offset += FILE_INFO_BLOCK_SIZE;
+    //ur_size = *reinterpret_cast<unsigned int*>(file_buf + offset);
+    offset += 4;
+
+    //config data
+    offset += 0x18C;
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "payload_start offset : 0x%X",offset);
+
+    payload_start = file_buf + offset;
+    
+    ptr_NSSA = payload_start;
+    unsigned int fw_size_withpaddingdata = NSSA_size;
+    if (NSSA_size % 0x100 != 0) {
+        fw_size_withpaddingdata += (0x100 - (NSSA_size % 0x100));
+    }
+
+    if (NSSA_Buf != NULL) { delete[] NSSA_Buf; NSSA_Buf = NULL; }
+    NSSA_Buf = new unsigned char[fw_size_withpaddingdata];
+    memset(NSSA_Buf, 0xFF, fw_size_withpaddingdata); 
+    memcpy(NSSA_Buf, ptr_NSSA, NSSA_size);
+/*
+    int i = 0;
+    printf("NSSA: ");
+    for (i = 0; i < 0x20; i++)
+    {
+        printf("%02X ",NSSA_Buf[i]);
+    }
+    printf("\n");
+*/    
+    ptr_NSSD = ptr_NSSA + NSSA_size;
+    unsigned int cu_size_withpaddingdata = NSSD_size;
+    if (NSSD_size % 0x100 != 0) {
+        cu_size_withpaddingdata += (0x100 - (NSSD_size % 0x100));
+    }
+
+    if (NSSD_Buf != NULL) { delete[] NSSD_Buf; NSSD_Buf = NULL; }
+    NSSD_Buf = new unsigned char[cu_size_withpaddingdata];
+    memset(NSSD_Buf, 0xFF, cu_size_withpaddingdata);
+    memcpy(NSSD_Buf, ptr_NSSD, NSSD_size);
+/*
+    printf("NSSD: ");
+    for (i = 0; i < 0x20; i++)
+    {
+        printf("%02X ",NSSD_Buf[i]);
+    }
+    printf("\n");
+*/
+
+    ptr_SSA = ptr_NSSD + NSSD_size; 
+    unsigned int boot_size_withpaddingdata = SSA_size;
+    if (SSA_size % 0x100 != 0) {
+        boot_size_withpaddingdata += (0x100 - (SSA_size % 0x100));
+    }
+
+    if (SSA_Buf != NULL) { delete[] SSA_Buf; SSA_Buf = NULL; }
+    SSA_Buf = new unsigned char[boot_size_withpaddingdata]; 
+    memset(SSA_Buf, 0xFF, boot_size_withpaddingdata);
+    memcpy(SSA_Buf, ptr_SSA, SSA_size);
+/*
+    printf("SSA: ");
+    for (i = 0; i < 0x20; i++)
+    {
+        printf("%02X ",SSA_Buf[i]);
+    }
+    printf("\n");  
+*/
+
+    if(check_STM_SecureFile(NSSA_Buf, eFLASH_REGION_SECURE_FILE_NSSA) == false)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not NSSA file");     
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "NSSA buffer verify");
+
+    if(check_STM_SecureFile(NSSD_Buf, eFLASH_REGION_SECURE_FILE_NSSD) == false)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not NSSD file");     
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "NSSD buffer verify");    
+
+    if(check_STM_SecureFile(SSA_Buf, eFLASH_REGION_SECURE_FILE_SSA) == false)
+    {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not SSA file");     
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "SSA buffer verify");
+
+    return true;
+}
+
+bool DeviceIO_hid_over_i2c::check_STMSecureMagicCode(unsigned char* bufs)
+{
+    static const unsigned char secure_magiccode[4] = { 0x3D, 0xB8, 0xF3, 0x96 };
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (bufs[i] != secure_magiccode[i])
+        {
+
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DeviceIO_hid_over_i2c::check_STM_SecureFile(unsigned char* bufs, unsigned char targetregion)
+{
+    if (!check_STMSecureMagicCode(bufs)) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not STM secure file");        
+        return false;
+    }
+
+    if (bufs[0x14] != targetregion) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "STM secure file Target Region is different");                
+        return false;
+    }
+
+    return true;
+}
+
+
+unsigned int DeviceIO_hid_over_i2c::GetCRC32_PKZIP(unsigned char* buf, int len)
+{
+    unsigned int crc = 0xFFFFFFFF;
+    for (int i = 0; i < len; i++) {
+        crc ^= buf[i];
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) crc = (crc >> 1) ^ 0xEDB88320;
+            else crc >>= 1;
+        }
+    }
+    return ~crc;
+}
+
+int DeviceIO_hid_over_i2c::Region_Write_CMD(unsigned char* send_buffer, unsigned short send_length)
+{
+    int uSecWait = GetCmdWaitAckTime(0xb4, 1000);
+    unsigned char buf[512+9];
+    unsigned char i2c_buf[HID_OUTPUT_MAX_LEN+10];
+    int ret = 1;
+    unsigned long i=0, pos=0, sended_len, send_len, len;
+    int retry_ack = 5;
+
+    memset(i2c_buf, 0x00, sizeof(i2c_buf));
+
+    len = send_length + 1; // +1 for SubCmd
+
+    buf[0] = TOKEN_STX1;
+    buf[1] = TOKEN_STX2;
+    buf[2] = CMD_MAIN_CMD; // 0x13
+    buf[3] = (len >> 8)  & 0xFF;
+    buf[4] = len & 0xFF;
+    buf[5] = G2_SUB_0x13_REGION_WRITE_WRITE; // 0x43
+
+    // send_buffer = [Region, BlockIdx(4), PageIdx(4), Data(256)] = 265 bytes
+    for(i=0; i<send_length; i++) {
+        buf[6+i] = send_buffer[i];
+    }
+    buf[6+send_length] = TOKEN_ETX1;
+    buf[7+send_length] = TOKEN_ETX2;
+
+    len += 7; // STX, CMD, LEN, ETX 추가
+
+    sended_len = 0;
+    while(sended_len < len)
+    {
+        if(len - sended_len < HID_OUTPUT_MAX_LEN - 2) send_len = len - sended_len;
+        else send_len = HID_OUTPUT_MAX_LEN - 2;
+
+        i2c_buf[0] = HID_OUT_REPORT_ID;
+        i2c_buf[1] = index++;
+        if(index == 0xAA) index++;
+
+        for(i= 0; i < send_len; i++){
+            i2c_buf[i+2] = buf[pos++];
+        }
+        for(i=send_len; i < (HID_OUTPUT_MAX_LEN);i++){
+            i2c_buf[i+2] = 0;
+        }
+        sended_len += send_len;
+
+        ret = writeData( i2c_buf, HID_OUTPUT_MAX_LEN);
+        if(ret == -1) {
+            LOG_G2_I(CLog::getLogOwner(), TAG, "Region Write error");
+            return ret;
+        }
+    }
+
+    while(retry_ack >= 0)
+        {
+            retry_ack--;
+            waitRxData(m_fd, uSecWait);
+            ret = readData(buf, HID_INPUT_MAX_LEN, CMD_MAIN_CMD, G2_SUB_0x13_REGION_WRITE_WRITE);
+            
+            if(ret > 2) 
+            {
+                if (Check_Nak(buf) == true) 
+                {
+                    return 1;
+                }
+                else 
+                {
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "Region Write NAK Received!");
+                    return -1;
+                }
+            }
+            usleep(1000 * 500);
+        }
+
+    return ret;
+}
+
+bool DeviceIO_hid_over_i2c::Region_File_Write(unsigned char region)
+{
+    LOG_G2_I(CLog::getLogOwner(), TAG, "Region_File_Write START (Region: %02X)", region);
+
+    int nSizePage = 0x100;
+    int nRegionBlockSize = 4096;
+    int CurrentBlockIdx = 0;
+    int nRequestResult = 0;
+    unsigned char buf[64];
+    unsigned char *file_buf;
+    int file_size = 0;
+
+    if(region == WRITE_SSA_REGION)
+    {
+        file_buf = SSA_Buf;
+        file_size = SSA_size;
+    }
+    else if(region == WRITE_NSSA_REGION)
+    {
+        file_buf = NSSA_Buf;
+        file_size = NSSA_size;
+    }
+    else if(region == WRITE_NSSD_REGION)
+    {
+        file_buf = NSSD_Buf;
+        file_size = NSSD_size;
+    }
+
+    int padded_size = file_size;
+    if (padded_size % nSizePage != 0) {
+        padded_size += (nSizePage - (padded_size % nSizePage));
+    }
+
+    // 1. REGION WRITE START (0x04)
+    buf[0] = G2_SUB_0x13_REGION_WRITE_START; 
+    buf[1] = region;
+    buf[2] = (file_size >> 24) & 0xFF;
+    buf[3] = (file_size >> 16) & 0xFF;
+    buf[4] = (file_size >> 8) & 0xFF;
+    buf[5] = file_size & 0xFF;
+    
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, 6, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "REGION WRITE START Err");
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "REGION WRITE START Finsh");
+
+    // 2. REGION EARSE (0x05)
+    unsigned int ErasePageCount = 0x24; //hardcording data
+    buf[0] = G2_SUB_0x13_REGION_WRITE_ERASE; 
+    buf[1] = region;
+    buf[2] = 0; buf[3] = 0; buf[4] = 0; buf[5] = 0; 
+    buf[6] = (ErasePageCount >> 24) & 0xFF;
+    buf[7] = (ErasePageCount >> 16) & 0xFF;
+    buf[8] = (ErasePageCount >> 8) & 0xFF;
+    buf[9] = ErasePageCount & 0xFF;
+    
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, 10, CMD_F1_RETRY_MAX, 5000);
+    if (nRequestResult <= 0) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "REGION ERASE Err");
+        return false;
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "REGION WRITE ERASE Finsh");
+
+    int remain_sendBlock = ((padded_size % nRegionBlockSize) == 0 ? 0 : 1);
+    int lSendBlockCnt = (padded_size / nRegionBlockSize) + remain_sendBlock;
+    unsigned char write_payload[9 + 256];
+
+    // 4. REGION WRITE LOOP (0x06)
+    for (int k = 0; k < lSendBlockCnt; k++)
+    {
+        CurrentBlockIdx = k;
+        int lSendPageCnt = nRegionBlockSize / nSizePage; 
+
+        LOG_G2_D(CLog::getLogOwner(), TAG, "CurrentBlockIdx %d",CurrentBlockIdx);
+        if (k == lSendBlockCnt - 1) {
+            lSendPageCnt = (padded_size - (k * nRegionBlockSize)) / nSizePage;
+        }
+
+        int retry = 5;
+        for (int i = 0; i < lSendPageCnt; i++)
+        {
+            write_payload[0] = region;
+            write_payload[1] = (CurrentBlockIdx >> 24) & 0xFF;
+            write_payload[2] = (CurrentBlockIdx >> 16) & 0xFF;
+            write_payload[3] = (CurrentBlockIdx >> 8) & 0xFF;
+            write_payload[4] = CurrentBlockIdx & 0xFF;
+
+            write_payload[5] = (i >> 24) & 0xFF;
+            write_payload[6] = (i >> 16) & 0xFF;
+            write_payload[7] = (i >> 8) & 0xFF;
+            write_payload[8] = i & 0xFF;
+
+            memcpy(&write_payload[9], &file_buf[k * nRegionBlockSize + i * nSizePage], nSizePage);
+            nRequestResult = Region_Write_CMD(write_payload, 9 + nSizePage);
+
+            LOG_G2_D(CLog::getLogOwner(), TAG, "lSendPageCnt %d",i);
+            if (nRequestResult <= 0) 
+            {
+                LOG_G2_E(CLog::getLogOwner(), TAG, "REGION WRITE NAK! Retrying block...");
+                
+                buf[0] = G2_SUB_0x13_REGION_WRITE_ERASE; 
+                buf[1] = region;
+                buf[2] = (CurrentBlockIdx >> 24) & 0xFF;
+                buf[3] = (CurrentBlockIdx >> 16) & 0xFF;
+                buf[4] = (CurrentBlockIdx >> 8) & 0xFF;
+                buf[5] = CurrentBlockIdx & 0xFF;
+                buf[6] = 0; buf[7] = 0; buf[8] = 0; buf[9] = 1; // 1 Page Erase
+                
+                nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, 10, CMD_F1_RETRY_MAX, 1000);
+                if (nRequestResult <= 0) {
+                    LOG_G2_E(CLog::getLogOwner(), TAG, "Retry ERASE Err");
+                    return false;
+                }
+
+                i = -1; 
+                retry--;
+                if (retry == 0) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "REGION WRITE Finsh");    
+
+    // 5. REGION CRC32 CHECK (0x09)
+    unsigned int crc32 = GetCRC32_PKZIP(file_buf, padded_size);
+    LOG_G2_D(CLog::getLogOwner(), TAG, "REGION crc32 : %X, padded_size %X",crc32, padded_size);        
+    
+    buf[0] = G2_SUB_0x13_REGION_WRITE_CRC32; 
+    buf[1] = region;
+    buf[2] = (padded_size >> 24) & 0xFF;
+    buf[3] = (padded_size >> 16) & 0xFF;
+    buf[4] = (padded_size >> 8) & 0xFF;
+    buf[5] = padded_size & 0xFF;
+    buf[6] = (crc32 >> 24) & 0xFF;
+    buf[7] = (crc32 >> 16) & 0xFF;
+    buf[8] = (crc32 >> 8) & 0xFF;
+    buf[9] = crc32 & 0xFF;
+
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, 10, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "REGION CRC32 Err");
+        return false;
+    }
+    usleep(1000 * 1000); // 1초 대기
+
+    LOG_G2_D(CLog::getLogOwner(), TAG, "REGION WRITE crc32 Finsh");    
+
+    // 6. REGION FINISH (0x07)
+    buf[0] = G2_SUB_0x13_REGION_WRITE_FINISH; 
+    buf[1] = region;
+    
+    nRequestResult = TryWriteData(CMD_MAIN_CMD, buf, 2, CMD_F1_RETRY_MAX, 1000);
+    if (nRequestResult <= 0) {
+        LOG_G2_E(CLog::getLogOwner(), TAG, "REGION FINISH Err");
+        return false;
+    }
+
+    LOG_G2_I(CLog::getLogOwner(), TAG, "Region_File_Write Success!");
+    return true;
+}
+
 

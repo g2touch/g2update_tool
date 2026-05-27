@@ -21,6 +21,13 @@ using namespace ARG;
 #define _12K            0x3000
 #define _16K            0x4000
 
+#define eFLASH_REGION_SECURE_FILE_SSA  0x00
+#define eFLASH_REGION_SECURE_FILE_NSSA  0x01
+#define eFLASH_REGION_SECURE_FILE_NSSD  0x03
+
+#define WRITE_NSSA_REGION  0x60
+#define WRITE_NSSD_REGION  0x61
+#define WRITE_SSA_REGION  0x62
 
 namespace G2
 {

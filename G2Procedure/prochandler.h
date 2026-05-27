@@ -25,7 +25,7 @@ namespace G2
             private:
                 string m_fnameLoaded;
                 int m_bufSize;
-                unsigned char m_bufBinary[0x80000];
+                unsigned char m_bufBinary[0xA0000];
         };
     }
 }

@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
     // Prepare Update. Open & Get Hid Info (VID will be Checked at here)
     devHandler->openDevice();
 
-    if (devHandler->IsDeviceOpened() && argHandle->GetBinFilePath().npos > 0)
+    if (devHandler->IsDeviceOpened() && argHandle->GetBinFilePath().length() > 0)
     {
         CProcHandler *ProcHandler = new CProcHandler();
 

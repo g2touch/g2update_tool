@@ -1,8 +1,8 @@
 #ifndef DEVICEIO_HID_OVER_I2C_H
 #define DEVICEIO_HID_OVER_I2C_H
 
-#include "stdio.h"
-#include "string"
+#include <stdio.h>
+#include <string>
 #include "arghandler.h"
 #include "packet.h"
 #include <list>
@@ -56,8 +56,10 @@ namespace G2
                 void SET_basestraddr(unsigned short vid_temp);
                 int GoToBoot();
                 int HWReset();
-                unsigned int FindFWFeature(unsigned char *file_buf, unsigned int buf_size);
+                int FindFWFeature(unsigned char *file_buf, unsigned int buf_size);
                 int FindBootVerandPartitionTable (unsigned char *file_buf, unsigned int buf_size);                
+                bool CheckSFIfile(unsigned char *file_buf, int buf_size);
+                bool Region_File_Write(unsigned char region);
             protected:
                 void initBuffer();
 
@@ -92,8 +94,10 @@ namespace G2
 				bool Check_Nak(unsigned char *Rx_buf);
 				int Get_AppStartAddr_fromBinFile(unsigned char* file_buf, unsigned short idx, unsigned int* FW_Startaddr, bool GetPartition);
 				bool Get_Partition_info(int idx, unsigned char* m_abytContent);
-
-
+                unsigned int GetCRC32_PKZIP(unsigned char* buf, int len);
+                int Region_Write_CMD(unsigned char* send_buffer, unsigned short send_length);
+                bool check_STM_SecureFile(unsigned char* bufs, unsigned char targetregion);
+                bool check_STMSecureMagicCode(unsigned char* bufs);
             private:
                 int m_fd;
                 unsigned char* out_buffer;
@@ -105,6 +109,9 @@ namespace G2
                 unsigned int dbgidx_push;
                 unsigned int dbgidx_pop;
                 bool m_bOpened;
+                unsigned char* NSSA_Buf;
+                unsigned char* NSSD_Buf;
+                unsigned char* SSA_Buf;            
             public:                
                 unsigned int GetFWStartFullAddress; //Get goto boot
                 unsigned int GetFWStartFullErasesize; //Get goto boot
@@ -137,6 +144,9 @@ namespace G2
                 unsigned char cu_ver;
                 char Interface_Info;
                 bool m_Partition_NotMatched;
+                int NSSA_size;
+                int NSSD_size;
+                int SSA_size;                
         };
 
     }
