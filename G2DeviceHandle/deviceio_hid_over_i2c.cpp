@@ -3272,7 +3272,7 @@ bool DeviceIO_hid_over_i2c::CheckSFIfile(unsigned char* file_buf, int file_size)
 
     if (it == (file_buf + file_size)) 
     {
-        LOG_G2_E(CLog::getLogOwner(), TAG, "it is not SFI File\n");     
+        LOG_G2_D(CLog::getLogOwner(), TAG, "it is not SFI File\n");     
         return false;
     }
 
