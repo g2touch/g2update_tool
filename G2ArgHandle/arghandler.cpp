@@ -52,58 +52,72 @@ int CArgHandler::ParseArg(int argc, char *argv[])
         nRet = -2;
         return nRet;
     }
+    if (argv[0] == NULL)    // unkown param
+    {
+        nRet = -3;
+        return nRet;
+    }
 
     FullArg = string(argv[0]);													// set first item
     for (int i = 0; i < argc; ++i)
     {
         // TODO: duplicate argument check (how to ?)
-        if (i != 0) FullArg = (FullArg.append(" ")).append(string(argv[i]));    // skip first item
-
-        token = strtok(argv[i], CHAR_DELIMETER);    // check 1st token
-        if (token[0] == CHAR_KEY_PRECEDENCE)        // strats with '-'
+        if(argv[i] != NULL)
         {
-            if (strcmp(token, KEY_DEF_INTERFACE) == 0)
+            if (i != 0) FullArg = (FullArg.append(" ")).append(string(argv[i]));    // skip first item
+
+            token = strtok(argv[i], CHAR_DELIMETER);    // check 1st token
+            if (token[0] == CHAR_KEY_PRECEDENCE)        // strats with '-'
             {
-                m_sInterface = strtok(NULL, CHAR_DELIMETER);    // set 2nd token as value
+                if (strcmp(token, KEY_DEF_INTERFACE) == 0)
+                {
+                    char* val = strtok(NULL, CHAR_DELIMETER);
+                    if (val != NULL) m_sInterface = val;    // set 2nd token as value
+                    else nRet = -3;
+                }
+                else if (strcmp(token, KEY_DEF_BL_FORCE) == 0)
+                {
+                    m_bOptionBootForce = true;
+                }
+                else if (strcmp(token, KEY_DEF_DEBUG) == 0)
+                {
+                    m_bOptionDebug = true;
+                }
+                else if (strcmp(token, KEY_DEF_LOG) == 0)
+                {
+                    char* val = strtok(NULL, CHAR_DELIMETER);
+                    if (val != NULL) m_sLogFile = val;
+                    else nRet = -3;
+                }
+                else if (strcmp(token, KEY_DEF_HELP) == 0)
+                {
+                    m_bOptionHelp = true;
+                }
+                else if (strcmp(token, KEY_DEF_FILE) == 0)
+                {
+                    char* val = strtok(NULL, CHAR_DELIMETER);
+                    if (val != NULL) m_sBinFilePath = val;  // set 2nd token as value
+                    else nRet = -3;
+                }
+                else if (strcmp(token, KEY_DEF_VERHEX) == 0)
+                {
+                    m_bOptionVerHex = true;
+                }
+                else if (strcmp(token, KEY_DEF_SHOWVIDPID) == 0)
+                {
+                    m_bShowVidPid = true;
+                }
+                else
+                {
+                    nRet = -3;  // unknown param
+                }
             }
-            else if (strcmp(token, KEY_DEF_BL_FORCE) == 0)
-            {
-                m_bOptionBootForce = true;
-            }
-            else if (strcmp(token, KEY_DEF_DEBUG) == 0)
-            {
-                m_bOptionDebug = true;
-            }
-            else if (strcmp(token, KEY_DEF_LOG) == 0)
-            {
-                m_sLogFile = (strtok(NULL, CHAR_DELIMETER));
-            }
-            else if (strcmp(token, KEY_DEF_HELP) == 0)
-            {
-                m_bOptionHelp = true;
-            }
-            else if (strcmp(token, KEY_DEF_FILE) == 0)
-            {
-                m_sBinFilePath = strtok(NULL, CHAR_DELIMETER);  // set 2nd token as value
-            }
-            else if (strcmp(token, KEY_DEF_VERHEX) == 0)
-            {
-                m_bOptionVerHex = true;
-            }
-            else if (strcmp(token, KEY_DEF_SHOWVIDPID) == 0)
-            {
-                m_bShowVidPid = true;
-            }            
             else
             {
-                nRet = -3;  // unknown param
+                LOG_G2_I(CLog::getLogOwner(), TAG, "token : %s",  token);
+                m_sBinFilePath = string(token);
+                LOG_G2_I(CLog::getLogOwner(), TAG, "m_sBinFilePath : %s",  m_sBinFilePath.c_str());
             }
-        }
-        else
-        {
-            LOG_G2_I(CLog::getLogOwner(), TAG, "token : %s",  token);
-            m_sBinFilePath = string(token);
-            LOG_G2_I(CLog::getLogOwner(), TAG, "m_sBinFilePath : %s",  m_sBinFilePath.c_str());
         }
     }
 
